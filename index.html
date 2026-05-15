@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HireNear - Jobs on the Map</title>
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- Leaflet MarkerCluster -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.0/dist/MarkerCluster.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.0/dist/MarkerCluster.Default.css" />
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.0/dist/leaflet.markercluster.js"></script>
+
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background: #f5f5f5;
+      overflow: hidden;
+    }
+
+    #map {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+    }
+
+    .search-header {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      background: white;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+
+    .search-container {
+      max-width: 600px;
+      margin: 20px auto;
+      display: flex;
+      gap: 10px;
+      padding: 0 20px;
+    }
+
+    .search-input {
+      flex: 1;
+      padding: 12px 16px;
+      font-size: 16px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .search-input:focus {
+      border-color: #0066cc;
+    }
+
+    .search-btn {
+      padding: 12px 24px;
+      background: #0066cc;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 500;
+      transition: background 0.2s;
+    }
+
+    .search-btn:hover {
+      background: #0052a3;
+    }
+
+    .job-panel {
+      position: absolute;
+      bottom: 0;
+      right: 0;
+      width: 400px;
+      max-height: 600px;
+      background: white;
+      box-shadow: -2px 0 12px rgba(0, 0, 0, 0.15);
+      transform: translateX(100%);
+      transition: transform 0.3s ease-out;
+      overflow-y: auto;
+      z-index: 200;
+    }
+
+    .job-panel.active {
+      transform: translateX(0);
+    }
+
+    .job-panel-header {
+      padding: 20px;
+      border-bottom: 1px solid #eee;
+      display: flex;
+      justify-content: space-between;
+      align-items: start;
+    }
+
+    .job-close {
+      background: none;
+      border: none;
+      font-size: 24px;
+      cursor: pointer;
+      color: #999;
+      padding: 0;
+      width: 28px;
+      height: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .job-close:hover {
+      color: #333;
+    }
+
+    .job-content {
+      padding: 20px;
+    }
+
+    .job-title {
+      font-size: 20px;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+
+    .job-company {
+      font-size: 16px;
+      color: #666;
+      margin-bottom: 4px;
+    }
+
+    .job-location {
+      font-size: 14px;
+      color: #999;
+      margin-bottom: 16px;
+    }
+
+    .job-description {
+      font-size: 14px;
+      color: #333;
+      line-height: 1.6;
+      margin-bottom: 20px;
+    }
+
+    .job-apply {
+      width: 100%;
+      padding: 12px;
+      background: #0066cc;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 500;
+      transition: background 0.2s;
+    }
+
+    .job-apply:hover {
+      background: #0052a3;
+    }
+
+    .loading {
+      text-align: center;
+      padding: 20px;
+      color: #999;
+    }
+
+    .leaflet-popup-content-wrapper {
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    }
+
+    @media (max-width: 768px) {
+      .job-panel {
+        width: 100%;
+      }
+
+      .search-container {
+        flex-direction: column;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <div class="search-header">
+    <div class="search-container">
+      <input
+        type="text"
+        id="searchInput"
+        class="search-input"
+        placeholder="e.g., 'software engineer' or 'product manager Austin'"
+      >
+      <button id="searchBtn" class="search-btn">Search</button>
+    </div>
+  </div>
+
+  <div id="jobPanel" class="job-panel">
+    <div class="job-panel-header">
+      <div></div>
+      <button class="job-close" onclick="closeJobPanel()">×</button>
+    </div>
+    <div class="job-content" id="jobContent">
+      <div class="loading">Select a job to view details</div>
+    </div>
+  </div>
+
+  <script>
+    // Initialize map
+    const map = L.map('map').setView([39.8283, -98.5795], 4); // Center on US
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors',
+      maxZoom: 19,
+    }).addTo(map);
+
+    let markerClusterGroup = null;
+    let currentJobs = [];
+    let selectedJob = null;
+
+    // Search functionality
+    document.getElementById('searchBtn').addEventListener('click', performSearch);
+    document.getElementById('searchInput').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') performSearch();
+    });
+
+    function performSearch() {
+      const query = document.getElementById('searchInput').value;
+      if (!query.trim()) return;
+
+      const jobPanel = document.getElementById('jobPanel');
+      jobPanel.classList.remove('active');
+
+      // Simulate fetching jobs for now
+      // TODO: Replace with actual API call
+      searchJobs(query);
+    }
+
+    function searchJobs(query) {
+      // Placeholder: mock jobs until we have real data
+      const mockJobs = [
+        {
+          id: 1,
+          title: 'Senior Software Engineer',
+          company: 'TechCorp',
+          location: 'San Francisco, CA',
+          lat: 37.7749,
+          lng: -122.4194,
+          description: 'Building scalable backend systems. 5+ years experience required.',
+          url: 'https://example.com/jobs/1'
+        },
+        {
+          id: 2,
+          title: 'Software Engineer',
+          company: 'StartupXYZ',
+          location: 'San Francisco, CA',
+          lat: 37.7751,
+          lng: -122.4193,
+          description: 'Full-stack role with React and Node.js. Early-stage startup.',
+          url: 'https://example.com/jobs/2'
+        },
+        {
+          id: 3,
+          title: 'Product Manager',
+          company: 'BigTech',
+          location: 'Austin, TX',
+          lat: 30.2672,
+          lng: -97.7431,
+          description: 'Lead product strategy for mobile platform. 3+ years PM experience.',
+          url: 'https://example.com/jobs/3'
+        },
+        {
+          id: 4,
+          title: 'Software Engineer',
+          company: 'TechHub Austin',
+          location: 'Austin, TX',
+          lat: 30.2690,
+          lng: -97.7429,
+          description: 'Backend engineer for cloud infrastructure.',
+          url: 'https://example.com/jobs/4'
+        },
+        {
+          id: 5,
+          title: 'Product Manager',
+          company: 'VentureStudio',
+          location: 'New York, NY',
+          lat: 40.7128,
+          lng: -74.0060,
+          description: 'Consumer product leadership role in growing company.',
+          url: 'https://example.com/jobs/5'
+        },
+      ];
+
+      currentJobs = mockJobs;
+
+      // Clear existing markers
+      if (markerClusterGroup) {
+        map.removeLayer(markerClusterGroup);
+      }
+
+      markerClusterGroup = L.markerClusterGroup({
+        maxClusterRadius: 80,
+      });
+
+      const bounds = L.latLngBounds();
+
+      mockJobs.forEach(job => {
+        const marker = L.marker([job.lat, job.lng], {
+          title: job.title
+        });
+
+        marker.bindPopup(`
+          <strong>${job.title}</strong><br>
+          ${job.company}<br>
+          ${job.location}
+        `, { maxWidth: 200 });
+
+        marker.on('click', () => {
+          selectedJob = job;
+          displayJobDetails(job);
+        });
+
+        markerClusterGroup.addLayer(marker);
+        bounds.extend([job.lat, job.lng]);
+      });
+
+      map.addLayer(markerClusterGroup);
+
+      if (bounds.isValid()) {
+        map.fitBounds(bounds, { padding: [50, 50] });
+      }
+    }
+
+    function displayJobDetails(job) {
+      const jobContent = document.getElementById('jobContent');
+      jobContent.innerHTML = `
+        <div class="job-title">${job.title}</div>
+        <div class="job-company">${job.company}</div>
+        <div class="job-location">${job.location}</div>
+        <div class="job-description">${job.description}</div>
+        <a href="${job.url}" target="_blank" class="job-apply">View on Job Board</a>
+      `;
+
+      const jobPanel = document.getElementById('jobPanel');
+      jobPanel.classList.add('active');
+
+      // Center map on selected job
+      map.setView([job.lat, job.lng], 13);
+    }
+
+    function closeJobPanel() {
+      document.getElementById('jobPanel').classList.remove('active');
+      selectedJob = null;
+    }
+  </script>
+</body>
+</html>

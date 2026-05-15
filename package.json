@@ -1,0 +1,13 @@
+{
+  "name": "hirenear",
+  "version": "0.1.0",
+  "description": "Jobs on the map - search jobs geographically instead of in a list",
+  "type": "module",
+  "scripts": {
+    "dev": "python3 -m http.server 3000",
+    "start": "python3 -m http.server 3000"
+  },
+  "keywords": ["jobs", "map", "search"],
+  "author": "",
+  "license": "MIT"
+}

@@ -16,10 +16,10 @@ const MAX_SEARCHES_PER_DAY = 3; // ~90/month with safety margin
 app.use(cors({ origin: 'http://localhost:5173' }));
 app.use(express.json());
 
-const SERP_API_KEY = process.env.SERP_API_KEY;
+const SEARCH_API_KEY = process.env.SEARCH_API_KEY;
 const MAPBOX_TOKEN = process.env.MAPBOX_TOKEN;
 
-if (!SERP_API_KEY || !MAPBOX_TOKEN) {
+if (!SEARCH_API_KEY || !MAPBOX_TOKEN) {
   console.warn('⚠️  Missing env vars. Copy .env.example to .env and fill in your keys.');
 }
 
@@ -47,24 +47,36 @@ function recordSearch(ip) {
   searchCounts.set(ip, counts);
 }
 
-// --- Geocode a job location string → { lat, lng } ---
-async function geocodeLocation(location) {
-  const cacheKey = `geo:${location}`;
-  const cached = cache.get(cacheKey);
-  if (cached) return cached;
+// --- Geocode with company name for precise office location ---
+async function geocodeLocation(location, company = null) {
+  // Try company + location first for more precise results
+  const searchQueries = company
+    ? [`${company} ${location}`, location]
+    : [location];
 
-  const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(location)}.json?access_token=${MAPBOX_TOKEN}&limit=1&types=place,region,district,locality`;
+  for (const query of searchQueries) {
+    const cacheKey = `geo:${query}`;
+    const cached = cache.get(cacheKey);
+    if (cached) return cached;
 
-  const res = await fetch(url);
-  const data = await res.json();
+    const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?access_token=${MAPBOX_TOKEN}&limit=1&types=place,region,district,locality,address,poi_label`;
 
-  if (!data.features || data.features.length === 0) return null;
+    try {
+      const res = await fetch(url);
+      const data = await res.json();
 
-  const [lng, lat] = data.features[0].center;
-  const result = { lat, lng, placeName: data.features[0].place_name };
+      if (data.features && data.features.length > 0) {
+        const [lng, lat] = data.features[0].center;
+        const result = { lat, lng, placeName: data.features[0].place_name };
+        cache.set(cacheKey, result);
+        return result;
+      }
+    } catch (err) {
+      console.error(`Geocoding error for "${query}":`, err.message);
+    }
+  }
 
-  cache.set(cacheKey, result);
-  return result;
+  return null;
 }
 
 // --- Search jobs via SearchAPI ---
@@ -96,7 +108,7 @@ app.get('/api/jobs', async (req, res) => {
     const params = new URLSearchParams({
       engine: 'google_jobs',
       q: query,
-      api_key: SERP_API_KEY,
+      api_key: SEARCH_API_KEY,
       num: '20',
     });
 
@@ -106,33 +118,39 @@ app.get('/api/jobs', async (req, res) => {
     const apiRes = await fetch(`https://www.searchapi.io/api/v1/search?${params}`);
     const apiData = await apiRes.json();
 
+    console.log(`[${query}] SearchAPI response:`, {
+      status: apiRes.status,
+      error: apiData.error,
+      jobsCount: apiData.jobs_results?.length || 0,
+    });
+
     if (apiData.error) {
       return res.status(500).json({ error: apiData.error });
     }
 
-    const rawJobs = apiData.jobs_results || [];
+    const rawJobs = apiData.jobs || [];
 
-    // Geocode each job location (parallel, with deduplication)
-    const locationSet = [...new Set(rawJobs.map(j => j.location).filter(Boolean))];
-    const geocodeResults = await Promise.all(
-      locationSet.map(async loc => [loc, await geocodeLocation(loc)])
+    // Geocode each job with company name for precise office location
+    const jobsWithGeo = await Promise.all(
+      rawJobs.map(async job => {
+        const geo = await geocodeLocation(job.location, job.company_name);
+        return [job, geo];
+      })
     );
-    const geocodeMap = Object.fromEntries(geocodeResults.filter(([, v]) => v !== null));
 
-    const jobs = rawJobs
-      .map(job => {
-        const geo = geocodeMap[job.location];
+    const jobs = jobsWithGeo
+      .map(([job, geo]) => {
         return {
-          id: job.job_id || `${job.company_name}-${job.title}-${job.location}`,
+          id: job.snake_up_apply_id || `${job.company_name}-${job.title}-${job.location}`,
           title: job.title,
           company: job.company_name,
           location: job.location,
           via: job.via,
           description: job.description,
-          salary: job.detected_extensions?.salary_range ?? null,
-          workType: job.detected_extensions?.work_from_home ? 'Remote' : 'On-site',
-          postedAt: job.detected_extensions?.posted_at ?? null,
-          applyLink: job.apply_options?.[0]?.link ?? null,
+          salary: job.salary_range ?? null,
+          workType: job.work_from_home ? 'Remote' : 'On-site',
+          postedAt: job.posted_at ?? null,
+          applyLink: job.apply_link ?? null,
           lat: geo?.lat ?? null,
           lng: geo?.lng ?? null,
           hasCoords: geo !== null,

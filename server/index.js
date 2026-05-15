@@ -6,7 +6,12 @@ import { config } from 'dotenv';
 config();
 
 const app = express();
-const cache = new NodeCache({ stdTTL: 3600 }); // 1 hour cache
+const cache = new NodeCache({ stdTTL: 86400 }); // 24 hour cache to respect free tier
+
+// Rate limiter: track searches by IP to stay under 100/month free tier
+const searchCounts = new Map();
+const RATE_LIMIT_WINDOW = 24 * 60 * 60 * 1000; // 24 hours
+const MAX_SEARCHES_PER_DAY = 3; // ~90/month with safety margin
 
 app.use(cors({ origin: 'http://localhost:5173' }));
 app.use(express.json());
@@ -16,6 +21,30 @@ const MAPBOX_TOKEN = process.env.MAPBOX_TOKEN;
 
 if (!SERP_API_KEY || !MAPBOX_TOKEN) {
   console.warn('⚠️  Missing env vars. Copy .env.example to .env and fill in your keys.');
+}
+
+// Track searches for rate limiting
+function trackSearch(ip) {
+  const now = Date.now();
+  if (!searchCounts.has(ip)) {
+    searchCounts.set(ip, []);
+  }
+
+  const counts = searchCounts.get(ip);
+  // Remove entries older than 24 hours
+  counts.splice(0, counts.findIndex(t => now - t < RATE_LIMIT_WINDOW) || counts.length);
+
+  return {
+    count: counts.length,
+    limit: MAX_SEARCHES_PER_DAY,
+    remaining: Math.max(0, MAX_SEARCHES_PER_DAY - counts.length),
+  };
+}
+
+function recordSearch(ip) {
+  const counts = searchCounts.get(ip) || [];
+  counts.push(Date.now());
+  searchCounts.set(ip, counts);
 }
 
 // --- Geocode a job location string → { lat, lng } ---
@@ -47,6 +76,21 @@ app.get('/api/jobs', async (req, res) => {
   const cacheKey = `jobs:${query}:${location}:${chips}`;
   const cached = cache.get(cacheKey);
   if (cached) return res.json({ jobs: cached, fromCache: true });
+
+  // Check rate limit for new searches (only if NOT cached)
+  const ip = req.ip || req.connection.remoteAddress;
+  const rateStatus = trackSearch(ip);
+
+  if (rateStatus.count >= rateStatus.limit) {
+    return res.status(429).json({
+      error: 'Search limit reached. Please try again tomorrow.',
+      rateLimit: {
+        limit: rateStatus.limit,
+        remaining: 0,
+        resetIn: '24 hours',
+      },
+    });
+  }
 
   try {
     const params = new URLSearchParams({
@@ -96,6 +140,7 @@ app.get('/api/jobs', async (req, res) => {
       });
 
     cache.set(cacheKey, jobs);
+    recordSearch(ip); // Record successful search for rate limiting
     res.json({ jobs, fromCache: false });
   } catch (err) {
     console.error('Job search error:', err);

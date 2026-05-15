@@ -67,7 +67,7 @@ async function geocodeLocation(location) {
   return result;
 }
 
-// --- Search jobs via SerpApi ---
+// --- Search jobs via SearchAPI ---
 app.get('/api/jobs', async (req, res) => {
   const { query, location, chips } = req.query;
 
@@ -101,16 +101,16 @@ app.get('/api/jobs', async (req, res) => {
     });
 
     if (location) params.set('location', location);
-    if (chips) params.set('chips', chips); // e.g. date_posted:month
+    if (chips) params.set('chips', chips); // e.g. date_posted:week
 
-    const serpRes = await fetch(`https://serpapi.com/search?${params}`);
-    const serpData = await serpRes.json();
+    const apiRes = await fetch(`https://www.searchapi.io/api/v1/search?${params}`);
+    const apiData = await apiRes.json();
 
-    if (serpData.error) {
-      return res.status(500).json({ error: serpData.error });
+    if (apiData.error) {
+      return res.status(500).json({ error: apiData.error });
     }
 
-    const rawJobs = serpData.jobs_results || [];
+    const rawJobs = apiData.jobs_results || [];
 
     // Geocode each job location (parallel, with deduplication)
     const locationSet = [...new Set(rawJobs.map(j => j.location).filter(Boolean))];

@@ -296,9 +296,11 @@ async function readPageText(page, context, url, timeoutMs) {
   await assertSafeHttpUrl(url);
 
   let closedForTimeout = false;
-  let timeoutId = null;
+  let pageVisitTimeoutId = null;
   const visitPromise = (async () => {
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
+    const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
+    await assertSafeHttpUrl(response?.url() || page.url());
+    await assertSafeHttpUrl(page.url());
     const title = await page.title();
     const text = (await page.locator('body').innerText({ timeout: Math.min(3000, timeoutMs) }))
       .replace(/\s+/g, ' ')
@@ -310,7 +312,7 @@ async function readPageText(page, context, url, timeoutMs) {
   });
 
   const timeoutPromise = new Promise((_, reject) => {
-    timeoutId = setTimeout(() => {
+    pageVisitTimeoutId = setTimeout(() => {
       closedForTimeout = true;
       void context.close().catch(() => {});
       reject(new Error(`Page visit timed out after ${Math.round(timeoutMs / 1000)} seconds`));
@@ -324,7 +326,7 @@ async function readPageText(page, context, url, timeoutMs) {
     }
     return result;
   } finally {
-    clearTimeout(timeoutId);
+    clearTimeout(pageVisitTimeoutId);
   }
 }
 

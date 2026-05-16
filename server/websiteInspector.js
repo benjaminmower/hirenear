@@ -23,8 +23,10 @@ const WEAK_PATTERNS = [
 const USER_AGENT = 'HireNear-Scout/1.0 (+https://hirenear.com/bot)';
 const BLOCKED_RESOURCE_TYPES = new Set(['image', 'font', 'media']);
 const BLOCKED_HOSTNAMES = new Set(['localhost', '127.0.0.1', '0.0.0.0', '169.254.169.254']);
+const HOST_LOOKUP_TTL_MS = 5 * 60 * 1000;
 const PAGE_VISIT_TIMEOUT_MS = 15000;
 const robotsCache = new Map();
+const hostLookupCache = new Map();
 const activeInspectionContexts = new Map();
 
 export function normalizeDomain(website) {
@@ -106,10 +108,22 @@ function isBlockedAddress(address) {
 }
 
 async function resolveHostname(hostname) {
-  if (isIP(hostname)) {
-    return [{ address: hostname }];
+  const cached = hostLookupCache.get(hostname);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.addresses;
   }
-  return await lookup(hostname, { all: true, verbatim: true });
+
+  let addresses;
+  if (isIP(hostname)) {
+    addresses = [{ address: hostname }];
+  } else {
+    addresses = await lookup(hostname, { all: true, verbatim: true });
+  }
+  hostLookupCache.set(hostname, {
+    addresses,
+    expiresAt: Date.now() + HOST_LOOKUP_TTL_MS,
+  });
+  return addresses;
 }
 
 export async function assertSafeHttpUrl(rawUrl) {

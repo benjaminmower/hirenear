@@ -368,7 +368,8 @@ function isNegativeBusiness(place, negativeBusinessTypes = []) {
 }
 
 export async function discoverResumeMatchedPlaces({ lat, lng, radius, locationLabel, signals = {}, cache }) {
-  const safeRadius = Number.isFinite(clampScoutRadius(radius)) ? clampScoutRadius(radius) : 1000;
+  const clampedRadius = clampScoutRadius(radius);
+  const safeRadius = Number.isFinite(clampedRadius) ? clampedRadius : 1000;
   const candidates = [];
   let jobCandidateCount = 0;
   let employerCandidateCount = 0;

@@ -1,4 +1,4 @@
-import { clampScoutRadius, getErrorMessage, MIN_SCOUT_RADIUS_METERS } from './limits.js';
+import { clampScoutRadius, DEFAULT_SCOUT_RADIUS_METERS, getErrorMessage, MIN_SCOUT_RADIUS_METERS } from './limits.js';
 
 const EXCLUDED_PLACE_TYPES = new Set([
   'atm',
@@ -369,7 +369,7 @@ function isNegativeBusiness(place, negativeBusinessTypes = []) {
 
 export async function discoverResumeMatchedPlaces({ lat, lng, radius, locationLabel, signals = {}, cache }) {
   const clampedRadius = clampScoutRadius(radius);
-  const safeRadius = Number.isFinite(clampedRadius) ? clampedRadius : 1000;
+  const safeRadius = Number.isFinite(clampedRadius) ? clampedRadius : DEFAULT_SCOUT_RADIUS_METERS;
   const candidates = [];
   let jobCandidateCount = 0;
   let employerCandidateCount = 0;

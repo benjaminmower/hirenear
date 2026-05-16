@@ -1,6 +1,7 @@
 import { lookup } from 'dns/promises';
 import { isIP } from 'net';
 import { chromium } from 'playwright';
+import { getErrorMessage } from './limits.js';
 
 const LIKELY_PATHS = ['/careers', '/jobs', '/employment', '/join-us', '/work-with-us', '/apply', '/contact'];
 const STRONG_PATTERNS = [
@@ -426,7 +427,7 @@ export async function inspectWebsite(website, { maxPages = 5, timeoutMs = PAGE_V
       signalSummary: 'Website inspection failed',
       evidence,
       opportunities,
-      error: err.message,
+      error: getErrorMessage(err),
     };
   } finally {
     unregisterContext();

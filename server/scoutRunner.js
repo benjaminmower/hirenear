@@ -151,7 +151,7 @@ export async function cleanupStaleScoutRuns() {
      WHERE status = 'running'
        AND updated_at < now() - ($1::text || ' minutes')::interval
      RETURNING id`,
-    [STALE_RUNNING_RUN_MINUTES, 'Scout run expired after 15 minutes without completing. Please start a new run.']
+    [STALE_RUNNING_RUN_MINUTES, `Scout run expired after ${STALE_RUNNING_RUN_MINUTES} minutes without completing. Please start a new run.`]
   );
 
   const runIds = result.rows.map(row => row.id);

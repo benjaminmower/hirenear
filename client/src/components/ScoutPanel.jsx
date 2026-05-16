@@ -33,7 +33,7 @@ const STEP_META = {
   area: {
     eyebrow: 'Search mandate',
     title: 'Where should we focus?',
-    copy: 'Choose the market that matters most. Hirerz will build a local recruiting map from that point outward.',
+    copy: 'Choose the market that matters most. Hire Near will build a local recruiting map from that point outward.',
   },
   resume: {
     eyebrow: 'Candidate profile',
@@ -48,7 +48,7 @@ const STEP_META = {
   launch: {
     eyebrow: 'Search brief',
     title: 'Ready for review',
-    copy: 'Hirerz will identify nearby businesses first. You decide which doors are worth opening.',
+    copy: 'Hire Near will identify nearby businesses first. You decide which doors are worth opening.',
   },
 };
 
@@ -270,7 +270,7 @@ export default function ScoutPanel({
       <div style={styles.setupContainer}>
         <div style={styles.recruiterMark}>
           <span style={styles.recruiterRule} />
-          <span>hirerz.app</span>
+          <span>hirenear.app</span>
         </div>
         <div style={styles.setupHeader}>
           <div>
@@ -383,7 +383,7 @@ export default function ScoutPanel({
                 </div>
               </div>
               <div style={styles.notice}>
-                Resume text is sent to this server and Claude's API for matching. Hirerz stores hiring classifications and evidence URLs, and deletes scout runs after 30 days.
+                Resume text is sent to this server and Claude's API for matching. Hire Near stores hiring classifications and evidence URLs, and deletes scout runs after 30 days.
               </div>
             </>
           )}
@@ -501,7 +501,7 @@ export default function ScoutPanel({
           {searchPin ? `Pin: ${searchPin.lat.toFixed(4)}, ${searchPin.lng.toFixed(4)}` : 'Click the map to drop a scout pin.'}
         </div>
         <div style={styles.notice}>
-          Resume text is sent to this server and Claude's API for matching. Hirerz checks public business websites only after you click Visit, stores hiring classifications and evidence URLs, and deletes scout runs after 30 days.
+          Resume text is sent to this server and Claude's API for matching. Hire Near checks public business websites only after you click Visit, stores hiring classifications and evidence URLs, and deletes scout runs after 30 days.
         </div>
         {scout.error && <div style={styles.error}>{scout.error}</div>}
         {hasRun && (

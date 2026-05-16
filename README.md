@@ -1,8 +1,8 @@
-# HireNear
+# Hire Near
 
-HireNear is a map-first local hiring scout, not a full job board. Paste a resume, drop a pin, choose a radius, and Scout checks nearby public business websites for hiring signals before using Claude to rank fit.
+Hire Near is a map-first local hiring scout, not a full job board. Paste a resume, drop a pin, choose a radius, and walk nearby businesses one at a time. You decide which places are worth visiting, and Hire Near checks public business websites for hiring signals before using Claude to rank fit.
 
-The Scout workflow is intentionally website-first. SearchAPI is only used as a fallback when a business has no website or the website evidence is weak or absent. The product is designed to help you prioritize where to look, not to exhaustively enumerate every open role.
+The Scout workflow is intentionally website-first and human-paced. SearchAPI is only used as a fallback when a business has no website or the website evidence is weak or absent. The product is designed to help you prioritize where to look, not to exhaustively enumerate every open role.
 
 ## Features
 
@@ -20,11 +20,10 @@ The Scout workflow is intentionally website-first. SearchAPI is only used as a f
 - One batched Claude call per completed run for lower matching cost
 - End-of-run save-search prompt with a lightweight local profile
 - Manual delete endpoint and 30-day run retention cleanup
-- Legacy keyword job search and nearby business job search remain available
 
 ## Safety Boundaries
 
-HireNear does not:
+Hire Near does not:
 
 - submit forms
 - apply to jobs
@@ -38,9 +37,9 @@ Website text is used transiently for classification. Persisted evidence is limit
 
 ## User Disclosure
 
-Scout mode shows a privacy notice in the UI. The current disclosure is:
+The setup and run controls show privacy notices in the UI. The core disclosure is:
 
-> Your resume is sent to this server and Claude's API for AI-powered matching. HireNear visits public business websites on your behalf, stores only hiring classifications and evidence URLs, and deletes scout runs after 30 days. Results sample nearby businesses and are not exhaustive.
+> Resume text is sent to this server and Claude's API for matching. Hire Near checks public business websites only after you click Visit, stores hiring classifications and evidence URLs, and deletes scout runs after 30 days.
 
 ## Stack
 
@@ -97,6 +96,12 @@ ANTHROPIC_API_KEY=...
 ANTHROPIC_MODEL=claude-sonnet-4-6
 SCOUT_INSPECTION_CONCURRENCY=2
 SCOUT_INSPECTION_TTL_HOURS=48
+```
+
+Copy the client env template:
+
+```bash
+cp client/.env.example client/.env
 ```
 
 Client Mapbox value:
@@ -189,7 +194,6 @@ client/src/
     ScoutPanel.jsx
     JobList.jsx
   hooks/
-    useJobs.js
     useGeoJobs.js
     useScout.js
 ```
@@ -209,6 +213,7 @@ node --check server/resumeMatcher.js
 - `npm run dev:server` starts the server without `node --watch`; watch mode hit local file descriptor limits in this repo.
 - Without `ANTHROPIC_API_KEY`, Scout still runs and uses a simple heuristic fit score.
 - Re-running the same area can reuse fresh inspection cache rows from `business_inspections`.
+- Older keyword job search API code remains in the backend, but the current UI is centered on the Scout workflow.
 
 ## License
 

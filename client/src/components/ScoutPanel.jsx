@@ -26,8 +26,8 @@ const TARGET_LANES = [
   'Beauty/wellness',
 ];
 
-const SAVED_SEARCHES_KEY = 'hirenear:savedScoutSearches';
 const SETUP_STEPS = ['area', 'resume', 'lanes', 'launch'];
+const INTEREST_THRESHOLD = 70;
 
 const STEP_META = {
   area: {
@@ -109,16 +109,11 @@ export default function ScoutPanel({
   const [targetLanes, setTargetLanes] = useState(scout.run?.targetLanes || []);
   const [avoidTerms, setAvoidTerms] = useState(scout.run?.avoidTerms || '');
   const [visiting, setVisiting] = useState(false);
-  const [showSaveModal, setShowSaveModal] = useState(false);
-  const [savedCurrentRun, setSavedCurrentRun] = useState(false);
   const [setupStep, setSetupStep] = useState('area');
-  const [profile, setProfile] = useState(() => {
-    try {
-      return JSON.parse(localStorage.getItem('hirenear:userProfile') || '{}');
-    } catch {
-      return {};
-    }
-  });
+  const [interestEmail, setInterestEmail] = useState('');
+  const [interestSubmitting, setInterestSubmitting] = useState(false);
+  const [interestSubmittedRunId, setInterestSubmittedRunId] = useState(null);
+  const [interestError, setInterestError] = useState('');
   const businesses = scout.businesses || [];
   const opportunities = scout.opportunities || [];
   const matches = scout.matches || [];
@@ -131,6 +126,10 @@ export default function ScoutPanel({
     [...businesses.filter(b => b.inspectionStatus !== 'queued')]
       .sort((a, b) => (b.fitScore || 0) - (a.fitScore || 0)),
     [businesses]
+  );
+  const highFitBusinesses = useMemo(
+    () => decidedBusinesses.filter(b => b.inspectionStatus !== 'skipped' && Number(b.fitScore) >= INTEREST_THRESHOLD),
+    [decidedBusinesses]
   );
 
   // The next business the user should decide on
@@ -158,23 +157,16 @@ export default function ScoutPanel({
   }, [scout.run?.id]);
 
   useEffect(() => {
-    if (complete && scout.run?.id && !savedCurrentRun) setShowSaveModal(true);
-  }, [complete, savedCurrentRun, scout.run?.id]);
-
-  useEffect(() => {
-    const handler = (event) => {
-      if (!complete || savedCurrentRun) return;
-      event.preventDefault();
-      event.returnValue = '';
-    };
-    window.addEventListener('beforeunload', handler);
-    return () => window.removeEventListener('beforeunload', handler);
-  }, [complete, savedCurrentRun]);
+    setInterestEmail('');
+    setInterestError('');
+    setInterestSubmitting(false);
+  }, [scout.run?.id]);
 
   const handleStart = () => {
     if (!searchPin) return;
-    setSavedCurrentRun(false);
-    setShowSaveModal(false);
+    setInterestSubmittedRunId(null);
+    setInterestEmail('');
+    setInterestError('');
     scout.startScout({
       resumeText,
       targetLanes,
@@ -204,32 +196,39 @@ export default function ScoutPanel({
     });
   };
 
-  const handleSaveSearch = () => {
-    const nextProfile = {
-      name: String(profile.name || '').trim(),
-      email: String(profile.email || '').trim(),
-      targetLanes,
-      avoidTerms,
-    };
-    const savedSearch = {
-      runId: scout.run.id,
-      savedAt: new Date().toISOString(),
-      locationLabel: scout.run.locationLabel,
-      radius: scout.run.radius,
-      summary: scout.summary,
-      targetLanes,
-      avoidTerms,
-    };
-    const existing = JSON.parse(localStorage.getItem(SAVED_SEARCHES_KEY) || '[]');
+  const handleSubmitInterest = async () => {
+    if (!scout.run?.id || highFitBusinesses.length === 0 || interestSubmitting) return;
 
-    localStorage.setItem('hirenear:userProfile', JSON.stringify(nextProfile));
-    localStorage.setItem(SAVED_SEARCHES_KEY, JSON.stringify([
-      savedSearch,
-      ...existing.filter(item => item.runId !== scout.run.id),
-    ].slice(0, 20)));
-    setProfile(nextProfile);
-    setSavedCurrentRun(true);
-    setShowSaveModal(false);
+    const seekerEmail = interestEmail.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(seekerEmail)) {
+      setInterestError('Please enter a valid email address.');
+      return;
+    }
+
+    setInterestSubmitting(true);
+    setInterestError('');
+    try {
+      const res = await fetch(`/api/scout-runs/${scout.run.id}/interest`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          seekerEmail,
+          businessPlaceIds: highFitBusinesses.map(item => item.placeId),
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to notify businesses');
+      }
+
+      setInterestSubmittedRunId(scout.run.id);
+      setInterestEmail('');
+    } catch (err) {
+      setInterestError(err.message || 'Failed to notify businesses');
+    } finally {
+      setInterestSubmitting(false);
+    }
   };
 
   const handleVisit = useCallback(async (business) => {
@@ -576,6 +575,47 @@ export default function ScoutPanel({
         <div style={styles.summary}>{scout.summary}</div>
       )}
 
+      {complete && highFitBusinesses.length > 0 && interestSubmittedRunId !== scout.run?.id && (
+        <div style={styles.interestPanel}>
+          <div style={styles.interestTitle}>Top-fit businesses ({INTEREST_THRESHOLD}%+)</div>
+          <div style={styles.interestList}>
+            {highFitBusinesses.map(business => (
+              <div key={business.id} style={styles.interestItem}>
+                <span>{business.name}</span>
+                <span style={styles.interestScore}>{business.fitScore}%</span>
+              </div>
+            ))}
+          </div>
+          <label style={styles.interestLabel} htmlFor="interest-email">
+            Save your email to let these businesses know you’re interested
+          </label>
+          <input
+            id="interest-email"
+            style={styles.input}
+            type="email"
+            value={interestEmail}
+            onChange={e => setInterestEmail(e.target.value)}
+            placeholder="you@example.com"
+            autoComplete="email"
+          />
+          {interestError && <div style={styles.interestError}>{interestError}</div>}
+          <button
+            type="button"
+            style={styles.button}
+            onClick={handleSubmitInterest}
+            disabled={interestSubmitting}
+          >
+            {interestSubmitting ? 'Notifying...' : 'Notify businesses'}
+          </button>
+        </div>
+      )}
+
+      {complete && interestSubmittedRunId === scout.run?.id && (
+        <div style={styles.interestDone}>
+          Done. If we found contact info for these businesses, they’ll hear from you shortly.
+        </div>
+      )}
+
       {/* Visited/decided businesses log */}
       <div style={styles.list}>
         {decidedBusinesses.length === 0 && !isRunning && (
@@ -634,37 +674,6 @@ export default function ScoutPanel({
           );
         })}
       </div>
-      {showSaveModal && (
-        <div style={styles.modalBackdrop}>
-          <div style={styles.modal} role="dialog" aria-modal="true">
-            <div style={styles.modalTitle}>Save this scout?</div>
-            <div style={styles.modalCopy}>
-              Keep this ranked neighborhood report and reuse the same lanes next time.
-            </div>
-            <input
-              style={styles.input}
-              value={profile.name || ''}
-              onChange={e => setProfile(current => ({ ...current, name: e.target.value }))}
-              placeholder="Name"
-            />
-            <input
-              style={styles.input}
-              value={profile.email || ''}
-              onChange={e => setProfile(current => ({ ...current, email: e.target.value }))}
-              placeholder="Email"
-              type="email"
-            />
-            <div style={styles.modalActions}>
-              <button type="button" style={styles.skipButton} onClick={() => setShowSaveModal(false)}>
-                Not now
-              </button>
-              <button type="button" style={styles.button} onClick={handleSaveSearch}>
-                Save scout
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -1186,30 +1195,31 @@ const styles = {
     fontSize: 12,
     borderBottom: '1px solid var(--border)',
   },
-  cardSkipped: { opacity: 0.6 },
-  modalBackdrop: {
-    position: 'absolute',
-    inset: 0,
-    background: 'rgba(0,0,0,0.55)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 18,
-    zIndex: 10,
-  },
-  modal: {
-    width: '100%',
-    maxWidth: 340,
-    background: 'var(--bg-panel)',
-    border: '1px solid var(--border)',
-    borderRadius: 'var(--radius)',
-    padding: 16,
+  interestPanel: {
+    margin: '0 12px 10px',
+    padding: 12,
+    border: '1px solid #d9d3c9',
+    borderLeft: '3px solid #18794e',
+    borderRadius: 6,
+    background: '#ffffff',
     display: 'flex',
     flexDirection: 'column',
-    gap: 10,
-    boxShadow: '0 18px 60px rgba(0,0,0,0.45)',
+    gap: 8,
   },
-  modalTitle: { color: 'var(--text-primary)', fontSize: 15, fontWeight: 700 },
-  modalCopy: { color: 'var(--text-secondary)', fontSize: 12, lineHeight: 1.45 },
-  modalActions: { display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 },
+  interestTitle: { fontSize: 13, fontWeight: 700, color: '#182033' },
+  interestList: { display: 'flex', flexDirection: 'column', gap: 6 },
+  interestItem: { display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12, color: '#4d5665' },
+  interestScore: { color: '#18794e', fontWeight: 700 },
+  interestLabel: { fontSize: 12, color: '#4d5665' },
+  interestError: { color: '#b42318', fontSize: 12 },
+  interestDone: {
+    margin: '0 12px 10px',
+    padding: 12,
+    border: '1px solid #b7dfcc',
+    borderRadius: 6,
+    background: '#e5f4ec',
+    color: '#0f5132',
+    fontSize: 12,
+  },
+  cardSkipped: { opacity: 0.6 },
 };

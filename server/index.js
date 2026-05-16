@@ -1,9 +1,11 @@
 import express from 'express';
 import cors from 'cors';
 import NodeCache from 'node-cache';
+import { randomUUID } from 'crypto';
 import { config } from 'dotenv';
 import { createNearbyJobsHandler } from './geoSearch.js';
-import { migrate } from './db.js';
+import { migrate, query } from './db.js';
+import { sendBusinessNotifications } from './notifier.js';
 import { createScoutRun, deleteScoutRun, getScoutRun, runScout, visitBusiness, skipBusiness, subscribeScoutRun } from './scoutRunner.js';
 
 config();
@@ -22,6 +24,7 @@ app.use(express.json({ limit: '1mb' }));
 const SEARCH_API_KEY = process.env.SEARCH_API_KEY;
 const MAPBOX_TOKEN = process.env.MAPBOX_TOKEN;
 const GOOGLE_PLACES_API_KEY = process.env.GOOGLE_PLACES_API_KEY;
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 if (!SEARCH_API_KEY || !MAPBOX_TOKEN || !GOOGLE_PLACES_API_KEY) {
   console.warn('⚠️  Missing env vars. Copy .env.example to .env and fill in your keys.');
@@ -249,6 +252,86 @@ app.post('/api/scout-runs/:runId/skip/:placeId', async (req, res) => {
   } catch (err) {
     console.error('Skip business error:', err);
     res.status(500).json({ error: err.message || 'Failed to skip business' });
+  }
+});
+
+app.post('/api/scout-runs/:runId/interest', async (req, res) => {
+  const runId = String(req.params.runId || '').trim();
+  const seekerEmail = String(req.body?.seekerEmail || '').trim().toLowerCase();
+  const rawPlaceIds = Array.isArray(req.body?.businessPlaceIds) ? req.body.businessPlaceIds : null;
+
+  if (!EMAIL_PATTERN.test(seekerEmail)) {
+    return res.status(400).json({ error: 'seekerEmail must be a valid email address' });
+  }
+
+  if (!rawPlaceIds || rawPlaceIds.length === 0 || rawPlaceIds.length > 10) {
+    return res.status(400).json({ error: 'businessPlaceIds must be a non-empty array with at most 10 entries' });
+  }
+
+  const businessPlaceIds = rawPlaceIds
+    .map(value => String(value || '').trim())
+    .filter(Boolean);
+
+  if (businessPlaceIds.length === 0) {
+    return res.status(400).json({ error: 'businessPlaceIds must contain valid place ids' });
+  }
+
+  try {
+    const runResult = await query('SELECT id, status FROM scout_runs WHERE id = $1', [runId]);
+    if (runResult.rowCount === 0) {
+      return res.status(404).json({ error: 'Scout run not found' });
+    }
+    if (runResult.rows[0].status !== 'complete') {
+      return res.status(400).json({ error: 'Scout run must be complete before submitting interest' });
+    }
+
+    const existing = await query('SELECT 1 FROM scout_interest WHERE run_id = $1 LIMIT 1', [runId]);
+    if (existing.rowCount > 0) {
+      return res.status(409).json({ error: 'Interest already submitted for this run' });
+    }
+
+    const uniquePlaceIds = Array.from(new Set(businessPlaceIds));
+    const businesses = await query(
+      `SELECT place_id, name, contact_email, fit_score
+       FROM scout_businesses
+       WHERE run_id = $1
+         AND place_id = ANY($2::text[])`,
+      [runId, uniquePlaceIds]
+    );
+
+    const byPlaceId = new Map(businesses.rows.map(row => [row.place_id, row]));
+    let saved = 0;
+    let willNotify = 0;
+
+    for (const placeId of uniquePlaceIds) {
+      const business = byPlaceId.get(placeId);
+      if (!business) continue;
+      await query(
+        `INSERT INTO scout_interest
+          (id, run_id, business_place_id, business_name, business_contact_email, seeker_email, fit_score)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          randomUUID(),
+          runId,
+          business.place_id,
+          business.name,
+          business.contact_email || null,
+          seekerEmail,
+          Number.isFinite(Number(business.fit_score)) ? Number(business.fit_score) : 0,
+        ]
+      );
+      saved += 1;
+      if (business.contact_email) willNotify += 1;
+    }
+
+    sendBusinessNotifications(runId).catch(err => {
+      console.error('sendBusinessNotifications error:', err.message);
+    });
+
+    return res.json({ saved, willNotify });
+  } catch (err) {
+    console.error('Save scout interest error:', err);
+    return res.status(500).json({ error: err.message || 'Failed to save scout interest' });
   }
 });
 

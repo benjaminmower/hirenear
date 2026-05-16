@@ -20,7 +20,8 @@ const WEAK_PATTERNS = [
 ];
 const USER_AGENT = 'HireNear-Scout/1.0 (+https://hirenear.com/bot)';
 const robotsCache = new Map();
-const EMAIL_PATTERN = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/ig;
+const EMAIL_PATTERN = /\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b/ig;
+const EMAIL_VALIDATION_PATTERN = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/;
 
 export function normalizeDomain(website) {
   try {
@@ -180,7 +181,7 @@ function firstValidEmail(text) {
   for (const match of matches) {
     const value = String(match || '').trim().toLowerCase();
     if (!value) continue;
-    if (/^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/.test(value)) return value;
+    if (EMAIL_VALIDATION_PATTERN.test(value)) return value;
   }
   return null;
 }
@@ -195,7 +196,7 @@ function firstMailtoEmail(hrefs) {
       const parts = decoded.split(',').map(item => item.trim()).filter(Boolean);
       for (const part of parts) {
         const value = part.toLowerCase();
-        if (/^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/.test(value)) return value;
+        if (EMAIL_VALIDATION_PATTERN.test(value)) return value;
       }
     } catch {
       continue;

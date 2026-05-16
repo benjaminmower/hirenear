@@ -97,6 +97,18 @@ function runStage({ searchPin, resumeText, targetLanes, hasRun, isRunning, compl
   return 'Ready to scout';
 }
 
+function isValidEmail(email) {
+  if (!email || email.length > 254 || email.includes(' ')) return false;
+  const at = email.indexOf('@');
+  if (at <= 0 || at !== email.lastIndexOf('@') || at === email.length - 1) return false;
+  const local = email.slice(0, at);
+  const domain = email.slice(at + 1);
+  if (!local || !domain || !domain.includes('.')) return false;
+  if (local.startsWith('.') || local.endsWith('.') || local.includes('..')) return false;
+  if (domain.startsWith('.') || domain.endsWith('.') || domain.includes('..')) return false;
+  return true;
+}
+
 export default function ScoutPanel({
   scout,
   searchPin,
@@ -200,7 +212,7 @@ export default function ScoutPanel({
     if (!scout.run?.id || highFitBusinesses.length === 0 || interestSubmitting) return;
 
     const seekerEmail = interestEmail.trim().toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(seekerEmail)) {
+    if (!isValidEmail(seekerEmail)) {
       setInterestError('Please enter a valid email address.');
       return;
     }
@@ -219,13 +231,13 @@ export default function ScoutPanel({
 
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(data.error || 'Failed to notify businesses');
+        throw new Error(data.error || 'Failed to submit interest');
       }
 
       setInterestSubmittedRunId(scout.run.id);
       setInterestEmail('');
     } catch (err) {
-      setInterestError(err.message || 'Failed to notify businesses');
+      setInterestError(err.message || 'Failed to submit interest');
     } finally {
       setInterestSubmitting(false);
     }
@@ -587,7 +599,7 @@ export default function ScoutPanel({
             ))}
           </div>
           <label style={styles.interestLabel} htmlFor="interest-email">
-            Save your email to let these businesses know you’re interested
+            Enter your email to notify these businesses of your interest
           </label>
           <input
             id="interest-email"

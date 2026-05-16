@@ -24,7 +24,40 @@ app.use(express.json({ limit: '1mb' }));
 const SEARCH_API_KEY = process.env.SEARCH_API_KEY;
 const MAPBOX_TOKEN = process.env.MAPBOX_TOKEN;
 const GOOGLE_PLACES_API_KEY = process.env.GOOGLE_PLACES_API_KEY;
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const ALLOWED_LOCAL_EMAIL_CHARS = new Set(['.', '!', '#', '$', '%', '&', "'", '*', '+', '/', '=', '?', '^', '_', '`', '{', '|', '}', '~', '-']);
+
+function isAsciiAlphaNumeric(char) {
+  const code = char.charCodeAt(0);
+  return (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+}
+
+function isValidEmail(email) {
+  if (!email || email.length > 254 || email.includes(' ')) return false;
+  const at = email.indexOf('@');
+  if (at <= 0 || at !== email.lastIndexOf('@') || at === email.length - 1) return false;
+
+  const local = email.slice(0, at);
+  const domain = email.slice(at + 1);
+  if (!local || !domain || local.length > 64 || !domain.includes('.')) return false;
+  if (local.startsWith('.') || local.endsWith('.') || local.includes('..')) return false;
+  if (domain.startsWith('.') || domain.endsWith('.') || domain.includes('..')) return false;
+
+  for (const char of local) {
+    if (
+      !isAsciiAlphaNumeric(char) &&
+      !ALLOWED_LOCAL_EMAIL_CHARS.has(char)
+    ) {
+      return false;
+    }
+  }
+
+  const labels = domain.split('.');
+  if (labels.some(label => !label || label.startsWith('-') || label.endsWith('-'))) return false;
+  for (const char of domain) {
+    if (!isAsciiAlphaNumeric(char) && char !== '.' && char !== '-') return false;
+  }
+  return true;
+}
 
 if (!SEARCH_API_KEY || !MAPBOX_TOKEN || !GOOGLE_PLACES_API_KEY) {
   console.warn('⚠️  Missing env vars. Copy .env.example to .env and fill in your keys.');
@@ -260,7 +293,7 @@ app.post('/api/scout-runs/:runId/interest', async (req, res) => {
   const seekerEmail = String(req.body?.seekerEmail || '').trim().toLowerCase();
   const rawPlaceIds = Array.isArray(req.body?.businessPlaceIds) ? req.body.businessPlaceIds : null;
 
-  if (!EMAIL_PATTERN.test(seekerEmail)) {
+  if (!isValidEmail(seekerEmail)) {
     return res.status(400).json({ error: 'seekerEmail must be a valid email address' });
   }
 

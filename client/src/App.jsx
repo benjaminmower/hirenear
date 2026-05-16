@@ -1,11 +1,39 @@
 import { Suspense, lazy, useState } from 'react';
 import SearchPanel from './components/SearchPanel.jsx';
+import { MatchConfirmPage, MatchPage } from './components/MatchPages.jsx';
 import ScoutPanel from './components/ScoutPanel.jsx';
 import { useScout } from './hooks/useScout.js';
 
 const Map = lazy(() => import('./components/Map.jsx'));
 
+function getMatchRoute(pathname) {
+  const match = pathname.match(/^\/match\/([^/]+)(?:\/(confirm))?\/?$/);
+  if (!match) return null;
+  try {
+    return {
+      token: decodeURIComponent(match[1]),
+      confirm: match[2] === 'confirm',
+    };
+  } catch {
+    return {
+      token: match[1],
+      confirm: match[2] === 'confirm',
+    };
+  }
+}
+
 export default function App() {
+  const matchRoute = getMatchRoute(window.location.pathname);
+  if (matchRoute) {
+    return matchRoute.confirm
+      ? <MatchConfirmPage token={matchRoute.token} />
+      : <MatchPage token={matchRoute.token} />;
+  }
+
+  return <ScoutApp />;
+}
+
+function ScoutApp() {
   const [selectedJob, setSelectedJob] = useState(null);
   const [selectedBusiness, setSelectedBusiness] = useState(null);
   const [geoRadius, setGeoRadius] = useState(1000);

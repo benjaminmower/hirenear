@@ -1,9 +1,12 @@
 import express from 'express';
 import cors from 'cors';
 import NodeCache from 'node-cache';
+import { randomUUID } from 'crypto';
 import { config } from 'dotenv';
 import { createNearbyJobsHandler } from './geoSearch.js';
-import { migrate } from './db.js';
+import { migrate, query } from './db.js';
+import { getFunnelStats } from './analytics.js';
+import { sendBusinessNotifications } from './notifier.js';
 import { createScoutRun, deleteScoutRun, getScoutRun, runScout, visitBusiness, skipBusiness, subscribeScoutRun } from './scoutRunner.js';
 
 config();
@@ -22,6 +25,38 @@ app.use(express.json({ limit: '1mb' }));
 const SEARCH_API_KEY = process.env.SEARCH_API_KEY;
 const MAPBOX_TOKEN = process.env.MAPBOX_TOKEN;
 const GOOGLE_PLACES_API_KEY = process.env.GOOGLE_PLACES_API_KEY;
+const ALLOWED_LOCAL_EMAIL_CHARS = new Set(['.', '!', '#', '$', '%', '&', "'", '*', '+', '/', '=', '?', '^', '_', '`', '{', '|', '}', '~', '-']);
+
+function isAsciiAlphaNumeric(char) {
+  const code = char.charCodeAt(0);
+  return (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+}
+
+function isValidEmail(email) {
+  if (!email || email.length > 254 || email.includes(' ')) return false;
+  const at = email.indexOf('@');
+  if (at <= 0 || at !== email.lastIndexOf('@') || at === email.length - 1) return false;
+
+  const local = email.slice(0, at);
+  const domain = email.slice(at + 1);
+  if (!local || !domain || local.length > 64 || !domain.includes('.')) return false;
+  if (local.startsWith('.') || local.endsWith('.') || local.includes('..')) return false;
+  if (domain.startsWith('.') || domain.endsWith('.') || domain.includes('..')) return false;
+
+  for (const char of local) {
+    if (!isAsciiAlphaNumeric(char) && !ALLOWED_LOCAL_EMAIL_CHARS.has(char)) {
+      return false;
+    }
+  }
+
+  const labels = domain.split('.');
+  if (labels.some(label => !label || label.startsWith('-') || label.endsWith('-'))) return false;
+  for (const char of domain) {
+    if (!isAsciiAlphaNumeric(char) && char !== '.' && char !== '-') return false;
+  }
+
+  return true;
+}
 
 if (!SEARCH_API_KEY || !MAPBOX_TOKEN || !GOOGLE_PLACES_API_KEY) {
   console.warn('⚠️  Missing env vars. Copy .env.example to .env and fill in your keys.');
@@ -249,6 +284,219 @@ app.post('/api/scout-runs/:runId/skip/:placeId', async (req, res) => {
   } catch (err) {
     console.error('Skip business error:', err);
     res.status(500).json({ error: err.message || 'Failed to skip business' });
+  }
+});
+
+app.post('/api/scout-runs/:runId/interest', async (req, res) => {
+  const runId = String(req.params.runId || '').trim();
+  const seekerEmail = String(req.body?.seekerEmail || '').trim().toLowerCase();
+  const rawPlaceIds = Array.isArray(req.body?.businessPlaceIds) ? req.body.businessPlaceIds : null;
+
+  if (!isValidEmail(seekerEmail)) {
+    return res.status(400).json({ error: 'seekerEmail must be a valid email address' });
+  }
+
+  if (!rawPlaceIds || rawPlaceIds.length === 0 || rawPlaceIds.length > 10) {
+    return res.status(400).json({ error: 'businessPlaceIds must be a non-empty array with at most 10 entries' });
+  }
+
+  const businessPlaceIds = rawPlaceIds
+    .map(value => String(value || '').trim())
+    .filter(Boolean);
+
+  if (businessPlaceIds.length === 0) {
+    return res.status(400).json({ error: 'businessPlaceIds must contain valid place ids' });
+  }
+
+  try {
+    const runResult = await query('SELECT id, status FROM scout_runs WHERE id = $1', [runId]);
+    if (runResult.rowCount === 0) {
+      return res.status(404).json({ error: 'Scout run not found' });
+    }
+    if (runResult.rows[0].status !== 'complete') {
+      return res.status(400).json({ error: 'Scout run must be complete before submitting interest' });
+    }
+
+    const existing = await query('SELECT 1 FROM scout_interest WHERE run_id = $1 LIMIT 1', [runId]);
+    if (existing.rowCount > 0) {
+      return res.status(409).json({ error: 'Interest already submitted for this run' });
+    }
+
+    const uniquePlaceIds = Array.from(new Set(businessPlaceIds));
+    const businesses = await query(
+      `SELECT place_id, name, contact_email, fit_score
+       FROM scout_businesses
+       WHERE run_id = $1
+         AND place_id = ANY($2::text[])`,
+      [runId, uniquePlaceIds]
+    );
+
+    const byPlaceId = new Map(businesses.rows.map(row => [row.place_id, row]));
+    let saved = 0;
+    let willNotify = 0;
+
+    for (const placeId of uniquePlaceIds) {
+      const business = byPlaceId.get(placeId);
+      if (!business) continue;
+
+      await query(
+        `INSERT INTO scout_interest
+          (id, run_id, business_place_id, business_name, business_contact_email, seeker_email, fit_score)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          randomUUID(),
+          runId,
+          business.place_id,
+          business.name,
+          business.contact_email || null,
+          seekerEmail,
+          Number.isFinite(Number(business.fit_score)) ? Number(business.fit_score) : 0,
+        ]
+      );
+      saved += 1;
+      if (business.contact_email) willNotify += 1;
+    }
+
+    sendBusinessNotifications(runId).catch(err => {
+      console.error('sendBusinessNotifications error:', err.message);
+    });
+
+    return res.json({ saved, willNotify });
+  } catch (err) {
+    console.error('Save scout interest error:', err);
+    return res.status(500).json({ error: err.message || 'Failed to save scout interest' });
+  }
+});
+
+app.get('/api/match/:token', async (req, res) => {
+  const token = String(req.params.token || '').trim();
+
+  try {
+    const result = await query(
+      `SELECT id, business_name, fit_score, match_token, contacted_at, opened_at
+       FROM scout_interest
+       WHERE match_token = $1
+       LIMIT 1`,
+      [token]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Match not found' });
+    }
+
+    const match = result.rows[0];
+    if (!match.opened_at) {
+      await query(
+        `UPDATE scout_interest
+         SET opened_at = now()
+         WHERE id = $1
+           AND opened_at IS NULL`,
+        [match.id]
+      );
+    }
+
+    return res.json({
+      businessName: match.business_name,
+      fitScore: match.fit_score,
+      matchToken: match.match_token,
+      alreadyContacted: Boolean(match.contacted_at),
+    });
+  } catch (err) {
+    console.error('Get match error:', err);
+    return res.status(500).json({ error: err.message || 'Failed to load match' });
+  }
+});
+
+app.post('/api/match/:token/contact', async (req, res) => {
+  const token = String(req.params.token || '').trim();
+
+  try {
+    const result = await query(
+      `SELECT id, seeker_email, contacted_at
+       FROM scout_interest
+       WHERE match_token = $1
+       LIMIT 1`,
+      [token]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Match not found' });
+    }
+
+    const match = result.rows[0];
+    if (match.contacted_at) {
+      return res.status(409).json({ error: 'Match already contacted' });
+    }
+
+    const updated = await query(
+      `UPDATE scout_interest
+       SET contacted_at = now()
+       WHERE id = $1
+         AND contacted_at IS NULL
+       RETURNING seeker_email`,
+      [match.id]
+    );
+
+    if (updated.rowCount === 0) {
+      return res.status(409).json({ error: 'Match already contacted' });
+    }
+
+    return res.json({ seekerEmail: updated.rows[0].seeker_email });
+  } catch (err) {
+    console.error('Contact match error:', err);
+    return res.status(500).json({ error: err.message || 'Failed to contact match' });
+  }
+});
+
+app.get('/api/match/:token/confirm', async (req, res) => {
+  const token = String(req.params.token || '').trim();
+
+  try {
+    const result = await query(
+      `SELECT id, business_name
+       FROM scout_interest
+       WHERE match_token = $1
+       LIMIT 1`,
+      [token]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Match not found' });
+    }
+
+    const match = result.rows[0];
+    await query(
+      `UPDATE scout_interest
+       SET seeker_confirmed_at = now()
+       WHERE id = $1
+         AND seeker_confirmed_at IS NULL`,
+      [match.id]
+    );
+
+    return res.json({
+      businessName: match.business_name,
+      confirmed: true,
+    });
+  } catch (err) {
+    console.error('Confirm match error:', err);
+    return res.status(500).json({ error: err.message || 'Failed to confirm match' });
+  }
+});
+
+app.get('/api/admin/funnel', async (req, res) => {
+  const adminToken = process.env.ADMIN_TOKEN;
+  const authHeader = String(req.headers.authorization || '');
+  const providedToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+
+  if (!adminToken || !providedToken || providedToken !== adminToken) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  try {
+    return res.json(await getFunnelStats());
+  } catch (err) {
+    console.error('Get funnel stats error:', err);
+    return res.status(500).json({ error: err.message || 'Failed to load funnel stats' });
   }
 });
 

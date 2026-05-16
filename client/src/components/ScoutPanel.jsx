@@ -28,6 +28,7 @@ const TARGET_LANES = [
 
 const SAVED_SEARCHES_KEY = 'hirenear:savedScoutSearches';
 const SETUP_STEPS = ['area', 'resume', 'lanes', 'launch'];
+const INTEREST_THRESHOLD = 80;
 
 const STEP_META = {
   area: {
@@ -97,6 +98,10 @@ function runStage({ searchPin, resumeText, targetLanes, hasRun, isRunning, compl
   return 'Ready to scout';
 }
 
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || '').trim());
+}
+
 export default function ScoutPanel({
   scout,
   searchPin,
@@ -112,6 +117,10 @@ export default function ScoutPanel({
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [savedCurrentRun, setSavedCurrentRun] = useState(false);
   const [setupStep, setSetupStep] = useState('area');
+  const [interestEmail, setInterestEmail] = useState('');
+  const [interestSubmitting, setInterestSubmitting] = useState(false);
+  const [interestSubmittedRunId, setInterestSubmittedRunId] = useState(null);
+  const [interestError, setInterestError] = useState('');
   const [profile, setProfile] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem('hirenear:userProfile') || '{}');
@@ -131,6 +140,10 @@ export default function ScoutPanel({
     [...businesses.filter(b => b.inspectionStatus !== 'queued')]
       .sort((a, b) => (b.fitScore || 0) - (a.fitScore || 0)),
     [businesses]
+  );
+  const highFitBusinesses = useMemo(
+    () => decidedBusinesses.filter(b => b.inspectionStatus !== 'skipped' && Number(b.fitScore) >= INTEREST_THRESHOLD),
+    [decidedBusinesses]
   );
 
   // The next business the user should decide on
@@ -158,6 +171,13 @@ export default function ScoutPanel({
   }, [scout.run?.id]);
 
   useEffect(() => {
+    setInterestEmail(profile.email || '');
+    setInterestSubmitting(false);
+    setInterestSubmittedRunId(null);
+    setInterestError('');
+  }, [scout.run?.id]);
+
+  useEffect(() => {
     if (complete && scout.run?.id && !savedCurrentRun) setShowSaveModal(true);
   }, [complete, savedCurrentRun, scout.run?.id]);
 
@@ -175,6 +195,8 @@ export default function ScoutPanel({
     if (!searchPin) return;
     setSavedCurrentRun(false);
     setShowSaveModal(false);
+    setInterestSubmittedRunId(null);
+    setInterestError('');
     scout.startScout({
       resumeText,
       targetLanes,
@@ -230,6 +252,47 @@ export default function ScoutPanel({
     setProfile(nextProfile);
     setSavedCurrentRun(true);
     setShowSaveModal(false);
+  };
+
+  const handleSubmitInterest = async () => {
+    if (!scout.run?.id || highFitBusinesses.length === 0 || interestSubmitting) return;
+
+    const seekerEmail = interestEmail.trim().toLowerCase();
+    if (!isValidEmail(seekerEmail)) {
+      setInterestError('Please enter a valid email address.');
+      return;
+    }
+
+    setInterestSubmitting(true);
+    setInterestError('');
+
+    try {
+      const res = await fetch(`/api/scout-runs/${scout.run.id}/interest`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          seekerEmail,
+          businessPlaceIds: highFitBusinesses.map(item => item.placeId),
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to notify businesses');
+      }
+
+      setInterestSubmittedRunId(scout.run.id);
+      setInterestEmail(seekerEmail);
+      setProfile(current => ({ ...current, email: seekerEmail }));
+      localStorage.setItem('hirenear:userProfile', JSON.stringify({
+        ...profile,
+        email: seekerEmail,
+      }));
+    } catch (err) {
+      setInterestError(err.message || 'Failed to notify businesses');
+    } finally {
+      setInterestSubmitting(false);
+    }
   };
 
   const handleVisit = useCallback(async (business) => {
@@ -574,6 +637,47 @@ export default function ScoutPanel({
       {/* Summary */}
       {complete && scout.summary && (
         <div style={styles.summary}>{scout.summary}</div>
+      )}
+
+      {complete && highFitBusinesses.length > 0 && interestSubmittedRunId !== scout.run?.id && (
+        <div style={styles.interestPanel}>
+          <div style={styles.interestTitle}>Top-fit businesses ({INTEREST_THRESHOLD}%+)</div>
+          <div style={styles.interestList}>
+            {highFitBusinesses.map(business => (
+              <div key={business.id} style={styles.interestItem}>
+                <span>{business.name}</span>
+                <span style={styles.interestScore}>{business.fitScore}%</span>
+              </div>
+            ))}
+          </div>
+          <label style={styles.interestLabel} htmlFor="interest-email">
+            Enter your email to notify these businesses of your interest
+          </label>
+          <input
+            id="interest-email"
+            style={styles.input}
+            type="email"
+            value={interestEmail}
+            onChange={e => setInterestEmail(e.target.value)}
+            placeholder="you@example.com"
+            autoComplete="email"
+          />
+          {interestError && <div style={styles.interestError}>{interestError}</div>}
+          <button
+            type="button"
+            style={styles.button}
+            onClick={handleSubmitInterest}
+            disabled={interestSubmitting}
+          >
+            {interestSubmitting ? 'Notifying...' : 'Notify businesses'}
+          </button>
+        </div>
+      )}
+
+      {complete && interestSubmittedRunId === scout.run?.id && (
+        <div style={styles.interestDone}>
+          Done. If we found contact info for these businesses, they’ll hear from you shortly.
+        </div>
       )}
 
       {/* Visited/decided businesses log */}
@@ -1069,6 +1173,28 @@ const styles = {
     color: '#182033',
     fontSize: 13,
     lineHeight: 1.6,
+  },
+  interestPanel: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 10,
+    padding: 16,
+    borderBottom: '1px solid #d9d3c9',
+    background: '#ffffff',
+  },
+  interestTitle: { fontSize: 13, fontWeight: 700, color: '#182033' },
+  interestList: { display: 'flex', flexDirection: 'column', gap: 6 },
+  interestItem: { display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12, color: '#4d5665' },
+  interestScore: { color: '#18794e', fontWeight: 700 },
+  interestLabel: { fontSize: 12, color: '#4d5665' },
+  interestError: { color: '#b42318', fontSize: 12 },
+  interestDone: {
+    padding: 14,
+    borderBottom: '1px solid #d9d3c9',
+    background: '#e5f4ec',
+    color: '#182033',
+    fontSize: 12,
+    lineHeight: 1.5,
   },
   list: { overflowY: 'auto', flex: 1, padding: '10px 12px 16px', background: '#f7f8f5' },
   empty: {

@@ -19,6 +19,8 @@ export async function migrate() {
 
 async function runMigrations() {
   await pool.query(`
+    CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
     CREATE TABLE IF NOT EXISTS scout_runs (
       id TEXT PRIMARY KEY,
       resume_text TEXT NOT NULL,
@@ -72,6 +74,7 @@ async function runMigrations() {
       signal_summary TEXT,
       evidence JSONB NOT NULL DEFAULT '[]'::jsonb,
       opportunities JSONB NOT NULL DEFAULT '[]'::jsonb,
+      contact_email TEXT,
       error TEXT,
       inspected_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
@@ -102,6 +105,25 @@ async function runMigrations() {
       raw JSONB NOT NULL DEFAULT '{}'::jsonb,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+
+    CREATE TABLE IF NOT EXISTS scout_interest (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL REFERENCES scout_runs(id) ON DELETE CASCADE,
+      business_place_id TEXT NOT NULL,
+      business_name TEXT NOT NULL,
+      business_contact_email TEXT,
+      seeker_email TEXT NOT NULL,
+      fit_score INTEGER NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      notified_at TIMESTAMPTZ,
+      match_token TEXT UNIQUE DEFAULT gen_random_uuid()::text,
+      opened_at TIMESTAMPTZ,
+      contacted_at TIMESTAMPTZ,
+      seeker_confirmed_at TIMESTAMPTZ
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_scout_interest_match_token
+      ON scout_interest(match_token);
   `);
 
   await pool.query(`
@@ -119,7 +141,28 @@ async function runMigrations() {
     ALTER TABLE scout_businesses
       ADD COLUMN IF NOT EXISTS discovery_source TEXT,
       ADD COLUMN IF NOT EXISTS discovery_query TEXT,
-      ADD COLUMN IF NOT EXISTS discovery_score INTEGER;
+      ADD COLUMN IF NOT EXISTS discovery_score INTEGER,
+      ADD COLUMN IF NOT EXISTS contact_email TEXT;
+  `);
+
+  await pool.query(`
+    ALTER TABLE business_inspections
+      ADD COLUMN IF NOT EXISTS contact_email TEXT;
+  `);
+
+  await pool.query(`
+    ALTER TABLE scout_interest
+      ADD COLUMN IF NOT EXISTS business_contact_email TEXT,
+      ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS match_token TEXT UNIQUE DEFAULT gen_random_uuid()::text,
+      ADD COLUMN IF NOT EXISTS opened_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS contacted_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS seeker_confirmed_at TIMESTAMPTZ;
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_scout_interest_match_token
+      ON scout_interest(match_token);
   `);
 
   await pool.query(`DELETE FROM scout_runs WHERE created_at < now() - interval '30 days'`);

@@ -20,8 +20,8 @@ const WEAK_PATTERNS = [
 ];
 const USER_AGENT = 'HireNear-Scout/1.0 (+https://hirenear.com/bot)';
 const robotsCache = new Map();
-const EMAIL_PATTERN = /\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b/ig;
-const EMAIL_VALIDATION_PATTERN = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/;
+const EMAIL_PATTERN = /\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b/g;
+const EMAIL_VALIDATION_PATTERN = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
 
 export function normalizeDomain(website) {
   try {

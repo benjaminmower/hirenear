@@ -358,7 +358,7 @@ app.post('/api/scout-runs/:runId/interest', async (req, res) => {
     }
 
     sendBusinessNotifications(runId).catch(err => {
-      console.error('sendBusinessNotifications error:', err.message);
+      console.error('sendBusinessNotifications error:', err.message || String(err));
     });
 
     return res.json({ saved, willNotify });

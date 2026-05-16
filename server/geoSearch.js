@@ -22,8 +22,10 @@ const SALT_LAKE_CITY = {
   lng: -111.8910,
 };
 
-const MAX_PLACES_TO_SHOW = 20;
-const MAX_COMPANIES_TO_CHECK = 5;
+const MAX_PLACES_TO_SHOW = Number(process.env.MAX_PLACES_TO_SHOW || 20);
+const MAX_COMPANIES_TO_CHECK = Number(process.env.MAX_COMPANIES_TO_CHECK || MAX_PLACES_TO_SHOW);
+const JOB_DISCOVERY_LIMIT = Number(process.env.SCOUT_JOB_DISCOVERY_LIMIT || 12);
+const EMPLOYER_DISCOVERY_LIMIT = Number(process.env.SCOUT_EMPLOYER_DISCOVERY_LIMIT || 16);
 
 function normalizeCompanyName(name) {
   return name
@@ -31,6 +33,55 @@ function normalizeCompanyName(name) {
     .replace(/&/g, 'and')
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
+}
+
+function normalizePlaceKey(place) {
+  if (place.place_id) return `place:${place.place_id}`;
+  const name = normalizeCompanyName(place.name || '');
+  const location = normalizeCompanyName(place.vicinity || place.formattedAddress || '');
+  return `name:${name}:${location}`;
+}
+
+function normalizeBusinessKey(name) {
+  return normalizeCompanyName(String(name || '').replace(/\b(llc|inc|co|company|corp|corporation)\b\.?/gi, ''));
+}
+
+function getCategoryFromTypes(types) {
+  if (!Array.isArray(types) || types.length === 0) return null;
+  const typeMap = {
+    'restaurant': 'Restaurant',
+    'cafe': 'Café',
+    'bar': 'Bar',
+    'hotel': 'Hotel',
+    'retail': 'Retail',
+    'shopping_mall': 'Shopping',
+    'grocery_or_supermarket': 'Grocery',
+    'pharmacy': 'Pharmacy',
+    'hospital': 'Hospital',
+    'clinic': 'Clinic',
+    'doctor': 'Medical',
+    'dentist': 'Dentist',
+    'bank': 'Bank',
+    'library': 'Library',
+    'school': 'School',
+    'university': 'University',
+    'gym': 'Gym',
+    'park': 'Park',
+    'office': 'Office',
+    'corporate_office': 'Corporate Office',
+    'headquarters': 'Headquarters',
+    'beauty_salon': 'Salon',
+    'hair_care': 'Hair Care',
+    'spa': 'Spa',
+    'museum': 'Museum',
+    'art_gallery': 'Gallery',
+    'night_club': 'Night Club',
+    'bakery': 'Bakery',
+  };
+  for (const type of types) {
+    if (typeMap[type]) return typeMap[type];
+  }
+  return null;
 }
 
 function mapSearchApiJob(job, companyName) {
@@ -45,6 +96,19 @@ function mapSearchApiJob(job, companyName) {
     workType: job.work_from_home ? 'Remote' : 'On-site',
     postedAt: job.posted_at ?? null,
     applyLink: job.apply_link ?? null,
+  };
+}
+
+function mapPlaceResult(p) {
+  return {
+    place_id: p.id,
+    name: p.displayName?.text || '',
+    geometry: p.location ? { location: { lat: p.location.latitude, lng: p.location.longitude } } : null,
+    vicinity: p.formattedAddress || '',
+    types: p.types || [],
+    rating: p.rating ?? null,
+    user_ratings_total: p.userRatingCount ?? 0,
+    websiteUri: p.websiteUri ?? null,
   };
 }
 
@@ -69,7 +133,7 @@ export async function fetchNearbyPlaces(lat, lng, radius) {
     headers: {
       'Content-Type': 'application/json',
       'X-Goog-Api-Key': apiKey,
-      'X-Goog-FieldMask': 'places.id,places.displayName,places.location,places.formattedAddress,places.types,places.rating,places.userRatingCount',
+      'X-Goog-FieldMask': 'places.id,places.displayName,places.location,places.formattedAddress,places.types,places.rating,places.userRatingCount,places.websiteUri',
     },
     body: JSON.stringify(body),
   });
@@ -81,15 +145,7 @@ export async function fetchNearbyPlaces(lat, lng, radius) {
   }
 
   // Normalize new API shape to match what filterAndRankPlaces expects
-  return (data.places || []).map(p => ({
-    place_id: p.id,
-    name: p.displayName?.text || '',
-    geometry: { location: { lat: p.location.latitude, lng: p.location.longitude } },
-    vicinity: p.formattedAddress || '',
-    types: p.types || [],
-    rating: p.rating ?? null,
-    user_ratings_total: p.userRatingCount ?? 0,
-  }));
+  return (data.places || []).map(mapPlaceResult);
 }
 
 export function filterAndRankPlaces(places, limit = MAX_PLACES_TO_SHOW) {
@@ -106,15 +162,30 @@ export function filterAndRankPlaces(places, limit = MAX_PLACES_TO_SHOW) {
     .slice(0, limit);
 }
 
-export async function searchJobsForCompany(companyName, cache, locationLabel = 'Salt Lake City, UT') {
+export async function searchJobsForCompany(companyName, cache, locationLabel = 'Salt Lake City, UT', targetLanes = [], avoidTerms = '', options = {}) {
+  if (!process.env.SEARCH_API_KEY) {
+    console.warn('[searchJobsForCompany] SEARCH_API_KEY is not configured');
+    return null;
+  }
+
   const normalizedName = normalizeCompanyName(companyName);
-  const cacheKey = `jobs:company:${normalizedName}:${locationLabel}`;
+  const targetText = targetLanes.length > 0 ? `${targetLanes.join(' OR ')} ` : '';
+  const avoidText = avoidTerms ? ` -${avoidTerms.split(',').map(term => term.trim()).filter(Boolean).join(' -')}` : '';
+  const cacheKey = `jobs:company:v4:${normalizedName}:${locationLabel}:${targetLanes.join('|')}:${avoidTerms}`;
   const cached = cache.get(cacheKey);
-  if (cached) return cached;
+  if (cached) {
+    console.log(`[${companyName}] SearchAPI jobs:`, {
+      location: locationLabel,
+      count: cached.length,
+      fromCache: true,
+      fromExtraction: options.fromExtraction,
+    });
+    return cached;
+  }
 
   const params = new URLSearchParams({
     engine: 'google_jobs',
-    q: `${companyName} jobs`,
+    q: `${companyName} ${targetText}jobs in ${locationLabel}${avoidText}`,
     location: locationLabel,
     api_key: process.env.SEARCH_API_KEY,
     num: '10',
@@ -129,6 +200,12 @@ export async function searchJobsForCompany(companyName, cache, locationLabel = '
   }
 
   const rawJobs = data.jobs || data.jobs_results || [];
+  console.log(`[${companyName}] SearchAPI jobs:`, {
+    location: locationLabel,
+    count: rawJobs.length,
+    fromCache: false,
+    fromExtraction: options.fromExtraction,
+  });
   const jobs = rawJobs.map(job => mapSearchApiJob(job, companyName));
 
   // Filter jobs to only include those in the target state (allow remote jobs)
@@ -143,12 +220,268 @@ export async function searchJobsForCompany(companyName, cache, locationLabel = '
   return filteredJobs;
 }
 
-export function createNearbyJobsHandler({ cache, trackSearch, recordSearch }) {
+export async function reverseGeocode(lat, lng, mapboxToken = process.env.MAPBOX_TOKEN) {
+  if (!mapboxToken) return null;
+  try {
+    const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?access_token=${mapboxToken}&types=place,region&limit=1`;
+    const res = await fetch(url);
+    const data = await res.json();
+    const feature = data.features?.[0];
+    if (!feature) return null;
+    const city = feature.text;
+    const stateContext = (feature.context || []).find(c => c.id.startsWith('region.'));
+    const stateCode = stateContext?.short_code?.replace('US-', '') || null;
+    return stateCode ? `${city}, ${stateCode}` : city;
+  } catch {
+    return null;
+  }
+}
+
+export async function resolveLocationLabel(lat, lng, providedLabel = null, mapboxToken = process.env.MAPBOX_TOKEN) {
+  const label = String(providedLabel || '').trim();
+  if (label && !/^dropped pin$/i.test(label)) return label;
+  return await reverseGeocode(lat, lng, mapboxToken) || 'Salt Lake City, UT';
+}
+
+async function searchJobsByTitle({ title, locationLabel, cache }) {
+  if (!process.env.SEARCH_API_KEY) return [];
+
+  const cleanTitle = String(title || '').trim();
+  if (!cleanTitle) return [];
+
+  const cacheKey = `jobs:title:v1:${cleanTitle}:${locationLabel}`;
+  const cached = cache?.get(cacheKey);
+  if (cached) return cached;
+
+  const params = new URLSearchParams({
+    engine: 'google_jobs',
+    q: `${cleanTitle} jobs in ${locationLabel}`,
+    location: locationLabel,
+    api_key: process.env.SEARCH_API_KEY,
+    num: '10',
+  });
+
+  const response = await fetch(`https://www.searchapi.io/api/v1/search?${params}`);
+  const data = await response.json();
+  if (!response.ok || data.error) {
+    console.error(`[${cleanTitle}] SearchAPI title job error:`, data.error || response.status);
+    return [];
+  }
+
+  const jobs = (data.jobs || data.jobs_results || []).map(job => mapSearchApiJob(job, job.company_name));
+  cache?.set(cacheKey, jobs);
+  console.log('[Scout job discovery] SearchAPI jobs:', { title: cleanTitle, location: locationLabel, count: jobs.length });
+  return jobs;
+}
+
+async function fetchPlacesTextSearch({ query, lat, lng, radius }) {
+  const apiKey = process.env.GOOGLE_PLACES_API_KEY;
+  if (!apiKey) throw new Error('GOOGLE_PLACES_API_KEY is not configured');
+
+  const body = {
+    textQuery: query,
+    maxResultCount: 10,
+    locationBias: {
+      circle: {
+        center: { latitude: lat, longitude: lng },
+        radius,
+      },
+    },
+  };
+
+  const response = await fetch('https://places.googleapis.com/v1/places:searchText', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Goog-Api-Key': apiKey,
+      'X-Goog-FieldMask': 'places.id,places.displayName,places.location,places.formattedAddress,places.types,places.rating,places.userRatingCount,places.websiteUri',
+    },
+    body: JSON.stringify(body),
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error?.message || 'Failed to fetch text search places');
+  }
+
+  return (data.places || []).map(mapPlaceResult);
+}
+
+function jobToCandidate(job, title, lat, lng, locationLabel) {
+  const company = String(job.company || '').trim();
+  if (!company) return null;
+  return {
+    place_id: `job:${normalizeCompanyName(company)}`,
+    name: company,
+    geometry: { location: { lat, lng } },
+    vicinity: job.location || locationLabel,
+    types: ['job_search_result'],
+    rating: null,
+    user_ratings_total: 0,
+    websiteUri: null,
+    discoverySource: 'job_search',
+    discoveryQuery: `${title} jobs in ${locationLabel}`,
+    discoveryScore: 300,
+    initialOpportunities: [{
+      source: 'searchapi',
+      kind: 'opening',
+      title: job.title || title,
+      url: job.applyLink || null,
+      description: [job.location, job.via].filter(Boolean).join(' - ') || job.description || null,
+      signalStrength: 'strong',
+    }],
+  };
+}
+
+function placeToCandidate(place, source, query, score) {
+  return {
+    ...place,
+    discoverySource: source,
+    discoveryQuery: query,
+    discoveryScore: score,
+    initialOpportunities: [],
+  };
+}
+
+function mergeCandidate(existing, next) {
+  existing.discoveryScore = Math.max(existing.discoveryScore || 0, next.discoveryScore || 0);
+  existing.discoverySource = existing.discoverySource === 'job_search' ? existing.discoverySource : next.discoverySource;
+  existing.discoveryQuery = [existing.discoveryQuery, next.discoveryQuery].filter(Boolean).join(' | ').slice(0, 500);
+  existing.initialOpportunities = [
+    ...(existing.initialOpportunities || []),
+    ...(next.initialOpportunities || []),
+  ];
+  if (!existing.websiteUri && next.websiteUri) existing.websiteUri = next.websiteUri;
+  if ((!existing.geometry || !existing.geometry.location) && next.geometry) existing.geometry = next.geometry;
+  if (!existing.vicinity && next.vicinity) existing.vicinity = next.vicinity;
+  if (String(existing.place_id || '').startsWith('job:') && next.place_id && !String(next.place_id).startsWith('job:')) {
+    existing.place_id = next.place_id;
+  }
+  return existing;
+}
+
+function isNegativeBusiness(place, negativeBusinessTypes = []) {
+  const text = `${place.name || ''} ${place.vicinity || ''} ${(place.types || []).join(' ')} ${getCategoryFromTypes(place.types) || ''}`.toLowerCase();
+  return negativeBusinessTypes.some(term => text.includes(String(term).toLowerCase()));
+}
+
+export async function discoverResumeMatchedPlaces({ lat, lng, radius, locationLabel, signals = {}, cache }) {
+  const candidates = [];
+  let jobCandidateCount = 0;
+  let employerCandidateCount = 0;
+  let nearbyCandidateCount = 0;
+  const jobTitles = Array.isArray(signals.jobSearchTitles) && signals.jobSearchTitles.length
+    ? signals.jobSearchTitles
+    : signals.jobTitles || [];
+  const employerQueries = Array.isArray(signals.employerSearchQueries) ? signals.employerSearchQueries : [];
+  const negativeBusinessTypes = Array.isArray(signals.negativeBusinessTypes) ? signals.negativeBusinessTypes : [];
+
+  for (const title of jobTitles.slice(0, 6)) {
+    let jobs = [];
+    try {
+      jobs = await searchJobsByTitle({ title, locationLabel, cache });
+    } catch (err) {
+      console.error(`[${title}] Scout job discovery failed:`, err.message);
+      continue;
+    }
+    for (const job of jobs.slice(0, 10)) {
+      const candidate = jobToCandidate(job, title, lat, lng, locationLabel);
+      if (candidate) {
+        candidates.push(candidate);
+        jobCandidateCount += 1;
+      }
+      if (jobCandidateCount >= JOB_DISCOVERY_LIMIT) break;
+    }
+    if (jobCandidateCount >= JOB_DISCOVERY_LIMIT) break;
+  }
+
+  for (const queryText of employerQueries.slice(0, 8)) {
+    const placeQuery = /\bnear\b|\bin\b/i.test(queryText)
+      ? queryText
+      : `${queryText} near ${locationLabel}`;
+    let places = [];
+    try {
+      places = filterAndRankPlaces(await fetchPlacesTextSearch({ query: placeQuery, lat, lng, radius }), 10);
+    } catch (err) {
+      console.error(`[${placeQuery}] Scout employer discovery failed:`, err.message);
+      continue;
+    }
+    for (const place of places) {
+      const demotion = isNegativeBusiness(place, negativeBusinessTypes) ? 40 : 0;
+      candidates.push(placeToCandidate(place, 'employer_search', placeQuery, 200 - demotion));
+      employerCandidateCount += 1;
+      if (employerCandidateCount >= EMPLOYER_DISCOVERY_LIMIT) break;
+    }
+    if (employerCandidateCount >= EMPLOYER_DISCOVERY_LIMIT) break;
+  }
+
+  const minimumBeforeBackfill = Math.min(MAX_PLACES_TO_SHOW, 12);
+  if ((jobCandidateCount + employerCandidateCount) < minimumBeforeBackfill) {
+    let nearby = [];
+    try {
+      nearby = filterAndRankPlaces(await fetchNearbyPlaces(lat, lng, radius));
+    } catch (err) {
+      console.error('[Scout nearby backfill] failed:', err.message);
+    }
+    for (const place of nearby) {
+      const demotion = isNegativeBusiness(place, negativeBusinessTypes) ? 120 : 0;
+      candidates.push(placeToCandidate(place, 'nearby_backfill', 'nearby places', 100 - demotion));
+      nearbyCandidateCount += 1;
+    }
+  }
+
+  const byPlace = new Map();
+  const byName = new Map();
+  for (const candidate of candidates) {
+    const placeKey = normalizePlaceKey(candidate);
+    const nameKey = normalizeBusinessKey(candidate.name);
+    const existingKey = byPlace.has(placeKey) ? placeKey : byName.get(nameKey);
+    if (existingKey && byPlace.has(existingKey)) {
+      const merged = mergeCandidate(byPlace.get(existingKey), candidate);
+      byPlace.set(normalizePlaceKey(merged), merged);
+      continue;
+    }
+    byPlace.set(placeKey, candidate);
+    if (nameKey) byName.set(nameKey, placeKey);
+  }
+
+  const discovered = [...new Set(byPlace.values())]
+    .filter(place => place.place_id && place.geometry?.location && place.name)
+    .sort((a, b) => {
+      if ((b.discoveryScore || 0) !== (a.discoveryScore || 0)) return (b.discoveryScore || 0) - (a.discoveryScore || 0);
+      return (b.user_ratings_total || 0) - (a.user_ratings_total || 0);
+    })
+    .slice(0, MAX_PLACES_TO_SHOW);
+
+  console.log('[Scout discovery] candidates:', {
+    location: locationLabel,
+    jobTitles,
+    employerQueries,
+    counts: {
+      jobSearch: jobCandidateCount,
+      employerSearch: employerCandidateCount,
+      nearbyBackfill: nearbyCandidateCount,
+      returned: discovered.length,
+    },
+    top: discovered.slice(0, 5).map(item => ({
+      name: item.name,
+      source: item.discoverySource,
+      score: item.discoveryScore,
+      query: item.discoveryQuery,
+    })),
+  });
+
+  return discovered;
+}
+
+export function createNearbyJobsHandler({ cache, trackSearch, recordSearch, mapboxToken }) {
   return async function nearbyJobsHandler(req, res) {
     const lat = req.query.lat === undefined ? SALT_LAKE_CITY.lat : Number(req.query.lat);
     const lng = req.query.lng === undefined ? SALT_LAKE_CITY.lng : Number(req.query.lng);
     const radius = Number(req.query.radius || 1000);
-    const locationLabel = req.query.locationLabel || 'Salt Lake City, UT';
+
+    const derivedLabel = await reverseGeocode(lat, lng, mapboxToken);
+    const locationLabel = derivedLabel || 'Salt Lake City, UT';
 
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
       return res.status(400).json({ error: 'lat and lng are required' });
@@ -196,9 +529,11 @@ export function createNearbyJobsHandler({ cache, trackSearch, recordSearch }) {
           return {
             placeId: place.place_id,
             name: place.name,
+            category: getCategoryFromTypes(place.types),
             lat: placeLat,
             lng: placeLng,
             vicinity: place.vicinity ?? '',
+            website: place.websiteUri ?? null,
             rating: place.rating ?? null,
             userRatingsTotal: place.user_ratings_total ?? 0,
             jobs,

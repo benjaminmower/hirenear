@@ -1,67 +1,89 @@
-import { useState } from 'react';
-import Map from './components/Map.jsx';
+import { Suspense, lazy, useState } from 'react';
 import SearchPanel from './components/SearchPanel.jsx';
-import JobList from './components/JobList.jsx';
-import { useJobs } from './hooks/useJobs.js';
+import ScoutPanel from './components/ScoutPanel.jsx';
+import { useScout } from './hooks/useScout.js';
+
+const Map = lazy(() => import('./components/Map.jsx'));
 
 export default function App() {
   const [selectedJob, setSelectedJob] = useState(null);
-  const { jobs, mappableJobs, unmappableJobs, loading, error, search } = useJobs();
+  const [selectedBusiness, setSelectedBusiness] = useState(null);
+  const [geoRadius, setGeoRadius] = useState(1000);
+  const scout = useScout();
+  const [searchPin, setSearchPin] = useState(null);
 
-  const handleSearch = (params) => {
+  const handlePinDrop = (lat, lng) => {
     setSelectedJob(null);
-    search(params);
+    setSelectedBusiness(null);
+    setSearchPin({ lat, lng });
   };
+
+  const scoutStats = {
+    businessCount: scout.businesses.length,
+    queuedCount: scout.businesses.filter(business => business.inspectionStatus === 'queued').length,
+    checkedCount: scout.businesses.filter(business =>
+      ['done', 'failed', 'skipped'].includes(business.inspectionStatus)
+    ).length,
+    strongCount: scout.businesses.filter(business => business.signalStrength === 'strong').length,
+    status: scout.run?.status,
+  };
+  const showScoutSetup = !scout.run?.id && !scout.loading;
 
   return (
     <div style={styles.app}>
       {/* Header */}
       <header style={styles.header}>
         <div style={styles.logo}>
-          <span style={styles.logoMark}>⬡</span>
-          <span style={styles.logoText}>jobmap</span>
-          <span style={styles.logoTagline}>find jobs on a map</span>
+          <span style={styles.logoMark} />
+          <span style={styles.logoStack}>
+            <span style={styles.logoText}>Hire Near</span>
+            <span style={styles.logoTagline}>Recruiting intelligence</span>
+          </span>
         </div>
-        <SearchPanel onSearch={handleSearch} loading={loading} />
-        <a
-          href="https://github.com/yourusername/jobmap"
-          target="_blank"
-          rel="noopener"
-          style={styles.ghLink}
-        >
-          ★ GitHub
-        </a>
+        <SearchPanel
+          searchPin={searchPin}
+          scoutStats={scoutStats}
+        />
       </header>
 
       {/* Body */}
       <div style={styles.body}>
         {/* Sidebar */}
-        <aside style={styles.sidebar}>
-          <JobList
-            jobs={jobs}
-            mappableJobs={mappableJobs}
-            unmappableJobs={unmappableJobs}
-            selectedJob={selectedJob}
-            onSelectJob={setSelectedJob}
-            loading={loading}
-            error={error}
+        <aside style={{ ...styles.sidebar, ...(showScoutSetup ? styles.setupSidebar : {}) }}>
+          <ScoutPanel
+            scout={scout}
+            searchPin={searchPin}
+            radius={geoRadius}
+            onRadiusChange={setGeoRadius}
+            selectedBusiness={selectedBusiness}
+            onSelectBusiness={setSelectedBusiness}
           />
         </aside>
 
         {/* Map */}
         <main style={styles.mapContainer}>
-          <Map
-            jobs={mappableJobs}
-            selectedJob={selectedJob}
-            onSelectJob={setSelectedJob}
-          />
+          <Suspense fallback={<div style={styles.mapFallback}>Loading map...</div>}>
+            <Map
+              mode="scout"
+              jobs={[]}
+              businesses={scout.businesses}
+              searchCenter={searchPin}
+              selectedJob={selectedJob}
+              selectedBusiness={selectedBusiness}
+              searchPin={searchPin}
+              onSelectJob={setSelectedJob}
+              onSelectBusiness={setSelectedBusiness}
+              onPinDrop={handlePinDrop}
+            />
+          </Suspense>
         </main>
       </div>
 
       <style>{`
         @keyframes spin { to { transform: rotate(360deg); } }
-        input:hover, input:focus { border-color: var(--accent) !important; }
-        select:hover, select:focus { border-color: var(--accent) !important; }
+        @keyframes pulse { 0%, 100% { opacity: 0.55; transform: scale(0.85); } 50% { opacity: 1; transform: scale(1.15); } }
+        input:hover, input:focus { border-color: #b56d2a !important; }
+        select:hover, select:focus { border-color: #b56d2a !important; }
         button:hover:not(:disabled) { opacity: 0.85; }
         button:disabled { opacity: 0.5; cursor: not-allowed; }
         .job-card:hover { background: var(--bg-hover); }
@@ -75,48 +97,54 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     height: '100dvh',
-    background: 'var(--bg)',
+    background: '#f7f8f5',
   },
   header: {
-    height: 'var(--header-height)',
-    background: 'var(--bg-panel)',
-    borderBottom: '1px solid var(--border)',
+    minHeight: 68,
+    background: '#ffffff',
+    borderBottom: '1px solid #d9d3c9',
     display: 'flex',
     alignItems: 'center',
-    padding: '0 16px',
-    gap: 12,
+    padding: '0 22px',
+    gap: 20,
     flexShrink: 0,
+    boxShadow: '0 8px 22px rgba(24, 32, 51, 0.06)',
+    zIndex: 2,
   },
   logo: {
     display: 'flex',
-    alignItems: 'baseline',
-    gap: 8,
+    alignItems: 'center',
+    gap: 11,
     flexShrink: 0,
+    minWidth: 188,
   },
   logoMark: {
-    fontSize: 20,
-    color: 'var(--accent)',
+    width: 22,
+    height: 22,
+    border: '2px solid #182033',
+    borderRadius: '50%',
+    boxShadow: 'inset 0 0 0 5px #ffffff, inset 0 0 0 7px #b56d2a',
+    background: '#182033',
+    display: 'inline-block',
+  },
+  logoStack: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 2,
   },
   logoText: {
-    fontSize: 16,
-    fontWeight: 600,
-    color: 'var(--text-primary)',
-    letterSpacing: '-0.02em',
+    fontFamily: 'Georgia, "Times New Roman", serif',
+    fontSize: 22,
+    fontWeight: 800,
+    color: '#182033',
+    lineHeight: 1,
   },
   logoTagline: {
-    fontSize: 11,
-    color: 'var(--text-muted)',
-    display: 'none', // hidden on small screens
-  },
-  ghLink: {
-    fontSize: 12,
-    color: 'var(--text-secondary)',
-    textDecoration: 'none',
-    flexShrink: 0,
-    padding: '6px 10px',
-    border: '1px solid var(--border)',
-    borderRadius: 'var(--radius)',
-    transition: 'color 0.15s',
+    fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    fontSize: 10,
+    fontWeight: 800,
+    color: '#8b8173',
+    textTransform: 'uppercase',
   },
   body: {
     display: 'flex',
@@ -125,15 +153,28 @@ const styles = {
   },
   sidebar: {
     width: 'var(--panel-width)',
-    background: 'var(--bg-panel)',
-    borderRight: '1px solid var(--border)',
+    background: '#f7f8f5',
+    borderRight: '1px solid #d9d3c9',
     display: 'flex',
     flexDirection: 'column',
     overflow: 'hidden',
     flexShrink: 0,
   },
+  setupSidebar: {
+    width: 'min(560px, 44vw)',
+  },
   mapContainer: {
     flex: 1,
     position: 'relative',
+  },
+  mapFallback: {
+    width: '100%',
+    height: '100%',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: 'var(--bg)',
+    color: 'var(--text-secondary)',
+    fontSize: 13,
   },
 };

@@ -1,123 +1,51 @@
-import { useState } from 'react';
-
-const DATE_FILTERS = [
-  { label: 'Any time', value: '' },
-  { label: 'Past month', value: 'month' },
-  { label: 'Past week', value: 'week' },
-  { label: 'Past 3 days', value: '3days' },
-  { label: 'Today', value: 'today' },
-];
-
-export default function SearchPanel({ onSearch, loading }) {
-  const [query, setQuery] = useState('');
-  const [location, setLocation] = useState('');
-  const [dateFilter, setDateFilter] = useState('');
-
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    onSearch({ query, location, dateFilter });
-  };
+export default function SearchPanel({
+  searchPin,
+  scoutStats,
+}) {
+  const productDescription = 'A new way to job search: walk the neighborhood, choose who to visit, and decide where you want to apply.';
+  const scoutStatus = scoutStats?.status === 'complete'
+    ? `${scoutStats.strongCount} strong signals from ${scoutStats.businessCount} places`
+    : scoutStats?.status === 'running'
+      ? `${scoutStats.checkedCount} checked · ${scoutStats.queuedCount} still queued`
+      : searchPin
+        ? 'Area selected · complete the search brief'
+        : productDescription;
 
   return (
-    <form onSubmit={handleSubmit} style={styles.form}>
-      <div style={styles.row}>
-        <div style={styles.inputGroup}>
-          <span style={styles.icon}>⌕</span>
-          <input
-            style={styles.input}
-            type="text"
-            placeholder="Job title, skills, company..."
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            required
-          />
-        </div>
-        <div style={styles.inputGroup}>
-          <span style={styles.icon}>◎</span>
-          <input
-            style={styles.input}
-            type="text"
-            placeholder="Location (optional)"
-            value={location}
-            onChange={e => setLocation(e.target.value)}
-          />
-        </div>
-        <select
-          style={styles.select}
-          value={dateFilter}
-          onChange={e => setDateFilter(e.target.value)}
-        >
-          {DATE_FILTERS.map(f => (
-            <option key={f.value} value={f.value}>{f.label}</option>
-          ))}
-        </select>
-        <button style={styles.button} type="submit" disabled={loading}>
-          {loading ? '...' : 'Search'}
-        </button>
+    <div style={styles.panel}>
+      <div style={styles.statusGroup}>
+        <span style={styles.status}>{scoutStatus}</span>
+        {scoutStats?.status === 'running' && <span style={styles.liveDot} aria-label="Scout running" />}
       </div>
-    </form>
+    </div>
   );
 }
 
 const styles = {
-  form: {
-    padding: '0 16px',
+  panel: {
     flex: 1,
-  },
-  row: {
-    display: 'flex',
-    gap: 8,
-    height: '100%',
-    alignItems: 'center',
-  },
-  inputGroup: {
-    flex: 1,
-    position: 'relative',
     display: 'flex',
     alignItems: 'center',
+    fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   },
-  icon: {
-    position: 'absolute',
-    left: 10,
-    color: 'var(--text-muted)',
-    fontSize: 16,
-    pointerEvents: 'none',
+  statusGroup: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+    minWidth: 0,
   },
-  input: {
-    width: '100%',
-    background: 'var(--bg-card)',
-    border: '1px solid var(--border)',
-    borderRadius: 'var(--radius)',
-    color: 'var(--text-primary)',
-    padding: '8px 10px 8px 30px',
-    fontSize: 13,
-    fontFamily: 'inherit',
-    outline: 'none',
-    transition: 'border-color 0.15s',
+  status: {
+    color: '#4d5665',
+    fontSize: 12,
+    fontWeight: 700,
+    lineHeight: 1.4,
   },
-  select: {
-    background: 'var(--bg-card)',
-    border: '1px solid var(--border)',
-    borderRadius: 'var(--radius)',
-    color: 'var(--text-secondary)',
-    padding: '8px 10px',
-    fontSize: 13,
-    fontFamily: 'inherit',
-    outline: 'none',
-    cursor: 'pointer',
+  liveDot: {
+    width: 8,
+    height: 8,
+    borderRadius: '50%',
+    background: '#18794e',
+    boxShadow: '0 0 0 4px #e5f4ec',
     flexShrink: 0,
-  },
-  button: {
-    background: 'var(--accent)',
-    border: 'none',
-    borderRadius: 'var(--radius)',
-    color: '#fff',
-    padding: '8px 20px',
-    fontSize: 13,
-    fontFamily: 'inherit',
-    fontWeight: 500,
-    cursor: 'pointer',
-    flexShrink: 0,
-    transition: 'opacity 0.15s',
   },
 };

@@ -1,6 +1,5 @@
 # Dependencies
 node_modules/
-package-lock.json
 yarn.lock
 
 # Environment variables
@@ -21,6 +20,8 @@ dist/
 build/
 .next/
 out/
+client/dist/
+client/node_modules/.vite/
 
 # Logs
 *.log
@@ -35,3 +36,6 @@ Thumbs.db
 # Cache
 .cache/
 .eslintcache
+.vite/
+playwright-report/
+test-results/

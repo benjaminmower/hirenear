@@ -2,6 +2,9 @@ import express from 'express';
 import cors from 'cors';
 import NodeCache from 'node-cache';
 import { config } from 'dotenv';
+import { createNearbyJobsHandler } from './geoSearch.js';
+import { migrate } from './db.js';
+import { createScoutRun, deleteScoutRun, getScoutRun, runScout, visitBusiness, skipBusiness, subscribeScoutRun } from './scoutRunner.js';
 
 config();
 
@@ -11,15 +14,16 @@ const cache = new NodeCache({ stdTTL: 86400 }); // 24 hour cache to respect free
 // Rate limiter: track searches by IP to stay under 100/month free tier
 const searchCounts = new Map();
 const RATE_LIMIT_WINDOW = 24 * 60 * 60 * 1000; // 24 hours
-const MAX_SEARCHES_PER_DAY = 3; // ~90/month with safety margin
+const MAX_SEARCHES_PER_DAY = Number(process.env.MAX_SEARCHES_PER_DAY || 3); // ~90/month with safety margin by default
 
 app.use(cors({ origin: 'http://localhost:5173' }));
-app.use(express.json());
+app.use(express.json({ limit: '1mb' }));
 
 const SEARCH_API_KEY = process.env.SEARCH_API_KEY;
 const MAPBOX_TOKEN = process.env.MAPBOX_TOKEN;
+const GOOGLE_PLACES_API_KEY = process.env.GOOGLE_PLACES_API_KEY;
 
-if (!SEARCH_API_KEY || !MAPBOX_TOKEN) {
+if (!SEARCH_API_KEY || !MAPBOX_TOKEN || !GOOGLE_PLACES_API_KEY) {
   console.warn('⚠️  Missing env vars. Copy .env.example to .env and fill in your keys.');
 }
 
@@ -30,9 +34,8 @@ function trackSearch(ip) {
     searchCounts.set(ip, []);
   }
 
-  const counts = searchCounts.get(ip);
-  // Remove entries older than 24 hours
-  counts.splice(0, counts.findIndex(t => now - t < RATE_LIMIT_WINDOW) || counts.length);
+  const counts = searchCounts.get(ip).filter(t => now - t < RATE_LIMIT_WINDOW);
+  searchCounts.set(ip, counts);
 
   return {
     count: counts.length,
@@ -128,7 +131,7 @@ app.get('/api/jobs', async (req, res) => {
       return res.status(500).json({ error: apiData.error });
     }
 
-    const rawJobs = apiData.jobs || [];
+    const rawJobs = apiData.jobs || apiData.jobs_results || [];
 
     // Geocode each job with company name for precise office location
     const jobsWithGeo = await Promise.all(
@@ -166,8 +169,125 @@ app.get('/api/jobs', async (req, res) => {
   }
 });
 
+app.get('/api/nearby-jobs', createNearbyJobsHandler({
+  cache,
+  trackSearch,
+  recordSearch,
+  mapboxToken: MAPBOX_TOKEN,
+}));
+
+app.post('/api/scout-runs', async (req, res) => {
+  const resumeText = String(req.body.resumeText || '').trim();
+  const lat = Number(req.body.lat);
+  const lng = Number(req.body.lng);
+  const radius = Number(req.body.radius || 1000);
+  const locationLabel = req.body.locationLabel || null;
+  const targetLanes = Array.isArray(req.body.targetLanes)
+    ? req.body.targetLanes.map(item => String(item).trim()).filter(Boolean).slice(0, 3)
+    : [];
+  const avoidTerms = String(req.body.avoidTerms || '').trim().slice(0, 300);
+
+  if (resumeText.length < 40) {
+    return res.status(400).json({ error: 'resumeText is required and must be at least 40 characters' });
+  }
+  if (targetLanes.length === 0) {
+    return res.status(400).json({ error: 'Choose at least one kind of work to target' });
+  }
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return res.status(400).json({ error: 'lat and lng are required' });
+  }
+  if (!Number.isFinite(radius) || radius < 100 || radius > 5000) {
+    return res.status(400).json({ error: 'radius must be between 100 and 5000 meters' });
+  }
+
+  try {
+    const runId = await createScoutRun({ resumeText, lat, lng, radius, locationLabel, targetLanes, avoidTerms });
+    res.status(202).json({ runId });
+    runScout(runId, cache);
+  } catch (err) {
+    console.error('Create scout run error:', err);
+    res.status(500).json({ error: err.message || 'Failed to create scout run' });
+  }
+});
+
+app.get('/api/scout-runs/:runId', async (req, res) => {
+  try {
+    const run = await getScoutRun(req.params.runId);
+    if (!run) return res.status(404).json({ error: 'Scout run not found' });
+    res.json(run);
+  } catch (err) {
+    console.error('Get scout run error:', err);
+    res.status(500).json({ error: err.message || 'Failed to load scout run' });
+  }
+});
+
+app.delete('/api/scout-runs/:runId', async (req, res) => {
+  try {
+    const deleted = await deleteScoutRun(req.params.runId);
+    if (!deleted) return res.status(404).json({ error: 'Scout run not found' });
+    res.status(204).end();
+  } catch (err) {
+    console.error('Delete scout run error:', err);
+    res.status(500).json({ error: err.message || 'Failed to delete scout run' });
+  }
+});
+
+app.post('/api/scout-runs/:runId/visit/:placeId', async (req, res) => {
+  try {
+    res.status(202).json({ ok: true });
+    visitBusiness(req.params.runId, req.params.placeId, cache);
+  } catch (err) {
+    console.error('Visit business error:', err);
+    res.status(500).json({ error: err.message || 'Failed to visit business' });
+  }
+});
+
+app.post('/api/scout-runs/:runId/skip/:placeId', async (req, res) => {
+  try {
+    res.status(202).json({ ok: true });
+    skipBusiness(req.params.runId, req.params.placeId);
+  } catch (err) {
+    console.error('Skip business error:', err);
+    res.status(500).json({ error: err.message || 'Failed to skip business' });
+  }
+});
+
+app.get('/api/scout-runs/:runId/events', (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+  });
+
+  const send = ({ type, payload }) => {
+    res.write(`event: ${type}\n`);
+    res.write(`data: ${JSON.stringify(payload)}\n\n`);
+  };
+
+  res.write(`event: connected\n`);
+  res.write(`data: ${JSON.stringify({ runId: req.params.runId })}\n\n`);
+
+  const unsubscribe = subscribeScoutRun(req.params.runId, send);
+  const heartbeat = setInterval(() => {
+    res.write(`event: heartbeat\n`);
+    res.write(`data: {}\n\n`);
+  }, 15000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    unsubscribe();
+  });
+});
+
 // --- Health check ---
 app.get('/api/health', (_, res) => res.json({ ok: true }));
 
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => console.log(`🗺️  jobmap server running on http://localhost:${PORT}`));
+migrate()
+  .then(() => {
+    app.listen(PORT, () => console.log(`🗺️  jobmap server running on http://localhost:${PORT}`));
+  })
+  .catch(err => {
+    console.error('Database migration failed:', err.stack || err.message || err);
+    process.exit(1);
+  });

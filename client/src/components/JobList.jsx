@@ -1,8 +1,21 @@
-export default function JobList({ jobs, mappableJobs, unmappableJobs, selectedJob, onSelectJob, loading, error }) {
+export default function JobList({
+  jobs,
+  mappableJobs,
+  unmappableJobs,
+  businesses = [],
+  checkedBusinessCount = 0,
+  mode = 'keyword',
+  selectedJob,
+  selectedBusiness,
+  onSelectJob,
+  onSelectBusiness,
+  loading,
+  error,
+}) {
   if (loading) return (
     <div style={styles.empty}>
       <div style={styles.spinner} />
-      <p style={styles.emptyText}>Searching jobs...</p>
+      <p style={styles.emptyText}>{mode === 'geo' ? 'Searching nearby businesses...' : 'Searching jobs...'}</p>
     </div>
   );
 
@@ -11,6 +24,39 @@ export default function JobList({ jobs, mappableJobs, unmappableJobs, selectedJo
       <p style={{ color: 'var(--red)', fontSize: 13 }}>⚠ {error}</p>
     </div>
   );
+
+  if (mode === 'geo') {
+    if (businesses.length === 0) return (
+      <div style={styles.empty}>
+        <p style={styles.emptyText}>Search Salt Lake City to find nearby businesses</p>
+      </div>
+    );
+
+    const hiringCount = businesses.filter(business => business.hasJobs).length;
+
+    return (
+      <div style={styles.container}>
+        <div style={styles.stats}>
+          <span style={styles.stat}>{businesses.length} businesses</span>
+          <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>·</span>
+          <span style={styles.stat}>{hiringCount} hiring</span>
+          <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>·</span>
+          <span style={styles.stat}>{checkedBusinessCount} checked</span>
+        </div>
+
+        <div style={styles.list}>
+          {businesses.map(business => (
+            <BusinessCard
+              key={business.placeId}
+              business={business}
+              selected={selectedBusiness?.placeId === business.placeId}
+              onSelect={() => onSelectBusiness(selectedBusiness?.placeId === business.placeId ? null : business)}
+            />
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   if (jobs.length === 0) return (
     <div style={styles.empty}>
@@ -44,6 +90,61 @@ export default function JobList({ jobs, mappableJobs, unmappableJobs, selectedJo
           />
         ))}
       </div>
+    </div>
+  );
+}
+
+function BusinessCard({ business, selected, onSelect }) {
+  const jobs = business.jobs || [];
+  const badgeText = business.hasJobs
+    ? `${jobs.length} jobs found`
+    : business.jobSearchStatus === 'no_jobs_found'
+      ? 'No jobs found'
+      : 'Not checked';
+
+  return (
+    <div
+      onClick={onSelect}
+      style={{
+        ...styles.card,
+        ...(selected ? styles.cardSelected : {}),
+        ...(!business.hasJobs ? styles.cardRemote : {}),
+      }}
+    >
+      <div style={styles.cardHeader}>
+        <span style={styles.title}>{business.name}</span>
+        {business.hasJobs ? (
+          <span style={styles.badge}>{badgeText}</span>
+        ) : (
+          <span style={styles.badgeGray}>{badgeText}</span>
+        )}
+      </div>
+      <div style={styles.company}>{business.vicinity}</div>
+      <div style={styles.meta}>
+        {business.rating && <span style={styles.location}>★ {business.rating}</span>}
+        <span style={styles.location}>{business.userRatingsTotal || 0} ratings</span>
+      </div>
+      {selected && jobs.length > 0 && (
+        <div style={styles.nestedJobs}>
+          {jobs.map(job => (
+            <div key={job.id} style={styles.nestedJob}>
+              <div style={styles.nestedTitle}>{job.title}</div>
+              <div style={styles.postedAt}>{job.location || job.via}</div>
+              {job.applyLink && (
+                <a
+                  href={job.applyLink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={e => e.stopPropagation()}
+                  style={styles.applyLink}
+                >
+                  Apply →
+                </a>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -128,6 +229,24 @@ const styles = {
     fontSize: 11, color: 'var(--accent)',
     textDecoration: 'none', border: '1px solid var(--accent)',
     padding: '2px 8px', borderRadius: 4, marginTop: 2,
+  },
+  nestedJobs: {
+    marginTop: 10,
+    borderTop: '1px solid var(--border)',
+    paddingTop: 8,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 8,
+  },
+  nestedJob: {
+    paddingLeft: 8,
+    borderLeft: '2px solid var(--accent)',
+  },
+  nestedTitle: {
+    fontSize: 12,
+    color: 'var(--text-primary)',
+    lineHeight: 1.35,
+    marginBottom: 3,
   },
   empty: {
     display: 'flex', flexDirection: 'column', alignItems: 'center',

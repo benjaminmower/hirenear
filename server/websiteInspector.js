@@ -299,8 +299,7 @@ async function readPageText(page, context, url, timeoutMs) {
   let pageVisitTimeoutId = null;
   const visitPromise = (async () => {
     const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
-    await assertSafeHttpUrl(response?.url() || page.url());
-    await assertSafeHttpUrl(page.url());
+    await assertSafeHttpUrl(page.url() || response?.url() || url);
     const title = await page.title();
     const text = (await page.locator('body').innerText({ timeout: Math.min(3000, timeoutMs) }))
       .replace(/\s+/g, ' ')

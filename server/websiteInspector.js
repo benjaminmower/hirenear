@@ -1,3 +1,5 @@
+import { lookup } from 'dns/promises';
+import { isIP } from 'net';
 import { chromium } from 'playwright';
 
 const LIKELY_PATHS = ['/careers', '/jobs', '/employment', '/join-us', '/work-with-us', '/apply', '/contact'];
@@ -19,7 +21,11 @@ const WEAK_PATTERNS = [
   /\bgeneral inquir(y|ies)\b/i,
 ];
 const USER_AGENT = 'HireNear-Scout/1.0 (+https://hirenear.com/bot)';
+const BLOCKED_RESOURCE_TYPES = new Set(['image', 'font', 'media']);
+const BLOCKED_HOSTNAMES = new Set(['localhost', '127.0.0.1', '0.0.0.0', '169.254.169.254']);
+const PAGE_VISIT_TIMEOUT_MS = 15000;
 const robotsCache = new Map();
+const activeInspectionContexts = new Map();
 
 export function normalizeDomain(website) {
   try {
@@ -37,6 +43,102 @@ function normalizeUrl(rawUrl, baseUrl) {
   } catch {
     return null;
   }
+}
+
+function registerInspectionContext(runId, context) {
+  if (!runId) return () => {};
+  const contexts = activeInspectionContexts.get(runId) || new Set();
+  contexts.add(context);
+  activeInspectionContexts.set(runId, contexts);
+  return () => {
+    const current = activeInspectionContexts.get(runId);
+    if (!current) return;
+    current.delete(context);
+    if (current.size === 0) {
+      activeInspectionContexts.delete(runId);
+    }
+  };
+}
+
+export async function closeRunInspectionSessions(runId) {
+  const contexts = activeInspectionContexts.get(runId);
+  if (!contexts || contexts.size === 0) return 0;
+  const active = [...contexts];
+  activeInspectionContexts.delete(runId);
+  await Promise.all(active.map(async context => {
+    try {
+      await context.close();
+    } catch {
+      // Ignore close errors during cleanup.
+    }
+  }));
+  return active.length;
+}
+
+function isBlockedIpv4(address) {
+  const octets = address.split('.').map(Number);
+  if (octets.length !== 4 || octets.some(octet => !Number.isInteger(octet) || octet < 0 || octet > 255)) {
+    return true;
+  }
+
+  const [first, second] = octets;
+  if (first === 0 || first === 10 || first === 127) return true;
+  if (first === 169 && second === 254) return true;
+  if (first === 172 && second >= 16 && second <= 31) return true;
+  if (first === 192 && second === 168) return true;
+  return false;
+}
+
+function isBlockedIpv6(address) {
+  const normalized = address.toLowerCase();
+  return normalized === '::1' ||
+    normalized === '::' ||
+    normalized.startsWith('fc') ||
+    normalized.startsWith('fd') ||
+    normalized.startsWith('fe80:');
+}
+
+function isBlockedAddress(address) {
+  const version = isIP(address);
+  if (version === 4) return isBlockedIpv4(address);
+  if (version === 6) return isBlockedIpv6(address);
+  return true;
+}
+
+async function resolveHostname(hostname) {
+  if (isIP(hostname)) {
+    return [{ address: hostname }];
+  }
+  return await lookup(hostname, { all: true, verbatim: true });
+}
+
+export async function assertSafeHttpUrl(rawUrl) {
+  let parsed;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error('Invalid URL');
+  }
+
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error('Only http and https URLs are allowed');
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+  if (BLOCKED_HOSTNAMES.has(hostname)) {
+    throw new Error('Blocked private or loopback hostname');
+  }
+
+  const addresses = await resolveHostname(hostname);
+  if (!addresses.length) {
+    throw new Error('Hostname did not resolve');
+  }
+
+  if (addresses.some(result => isBlockedAddress(result.address))) {
+    throw new Error('Blocked private or loopback address');
+  }
+
+  return parsed.toString();
 }
 
 function sameDomain(url, domain) {
@@ -80,8 +182,10 @@ function parseRobots(text) {
 async function getRobotsRules(origin) {
   if (robotsCache.has(origin)) return robotsCache.get(origin);
   try {
-    const response = await fetch(`${origin}/robots.txt`, {
+    const robotsUrl = await assertSafeHttpUrl(`${origin}/robots.txt`);
+    const response = await fetch(robotsUrl, {
       headers: { 'User-Agent': USER_AGENT },
+      redirect: 'manual',
       signal: AbortSignal.timeout(3000),
     });
     if (!response.ok) {
@@ -98,7 +202,7 @@ async function getRobotsRules(origin) {
 }
 
 export async function isAllowedByRobots(url) {
-  const parsed = new URL(url);
+  const parsed = new URL(await assertSafeHttpUrl(url));
   const groups = await getRobotsRules(parsed.origin);
   const relevant = groups.filter(group =>
     group.agents.includes('*') ||
@@ -173,7 +277,43 @@ function summarizeSignal(signal, opportunities) {
   return 'No hiring signal found on checked pages';
 }
 
-export async function inspectWebsite(website, { maxPages = 5, timeoutMs = 20000 } = {}) {
+async function readPageText(page, context, url, timeoutMs) {
+  await assertSafeHttpUrl(url);
+
+  let timedOut = false;
+  let timeoutId = null;
+  const visitPromise = (async () => {
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
+    const title = await page.title();
+    const text = (await page.locator('body').innerText({ timeout: Math.min(3000, timeoutMs) }))
+      .replace(/\s+/g, ' ')
+      .slice(0, 12000);
+    return { title, text };
+  })().catch(err => {
+    if (timedOut) return null;
+    throw err;
+  });
+
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      timedOut = true;
+      void context.close().catch(() => {});
+      reject(new Error(`Page visit timed out after ${Math.round(timeoutMs / 1000)} seconds`));
+    }, timeoutMs);
+  });
+
+  try {
+    const result = await Promise.race([visitPromise, timeoutPromise]);
+    if (timedOut || !result) {
+      throw new Error(`Page visit timed out after ${Math.round(timeoutMs / 1000)} seconds`);
+    }
+    return result;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+export async function inspectWebsite(website, { maxPages = 5, timeoutMs = PAGE_VISIT_TIMEOUT_MS, runId } = {}) {
   const domain = normalizeDomain(website);
   if (!website || !domain) {
     return {
@@ -189,6 +329,20 @@ export async function inspectWebsite(website, { maxPages = 5, timeoutMs = 20000 
   const start = Date.now();
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ userAgent: USER_AGENT });
+  const unregisterContext = registerInspectionContext(runId, context);
+  await context.route('**/*', async route => {
+    const request = route.request();
+    if (BLOCKED_RESOURCE_TYPES.has(request.resourceType())) {
+      return route.abort();
+    }
+
+    try {
+      await assertSafeHttpUrl(request.url());
+      return route.continue();
+    } catch {
+      return route.abort();
+    }
+  });
   const page = await context.newPage();
   const baseUrl = normalizeUrl(website, website);
   const queue = [baseUrl, ...LIKELY_PATHS.map(path => normalizeUrl(path, baseUrl))].filter(Boolean);
@@ -196,9 +350,12 @@ export async function inspectWebsite(website, { maxPages = 5, timeoutMs = 20000 
   const evidence = [];
   const opportunities = [];
   let bestSignal = 'none';
+  const overallTimeoutMs = timeoutMs * maxPages;
 
   try {
-    while (queue.length > 0 && seen.size < maxPages && Date.now() - start < timeoutMs) {
+    await assertSafeHttpUrl(baseUrl);
+
+    while (queue.length > 0 && seen.size < maxPages && Date.now() - start < overallTimeoutMs) {
       const url = queue.shift();
       if (!url || seen.has(url) || !sameDomain(url, domain)) continue;
       seen.add(url);
@@ -208,9 +365,7 @@ export async function inspectWebsite(website, { maxPages = 5, timeoutMs = 20000 
           evidence.push({ url, label: 'Skipped by robots.txt', snippet: 'robots.txt disallows this path' });
           continue;
         }
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: Math.min(8000, timeoutMs) });
-        const title = await page.title();
-        const text = (await page.locator('body').innerText({ timeout: 3000 })).replace(/\s+/g, ' ').slice(0, 12000);
+        const { title, text } = await readPageText(page, context, url, timeoutMs);
         const classification = classifyPage({ url, title, text });
 
         if (classification.evidence) evidence.push(classification.evidence);
@@ -235,6 +390,9 @@ export async function inspectWebsite(website, { maxPages = 5, timeoutMs = 20000 
           }
         }
       } catch (err) {
+        if (String(err?.message || '').includes('timed out after')) {
+          throw err;
+        }
         evidence.push({ url, label: 'Page check failed', snippet: err.message });
       }
     }
@@ -257,6 +415,7 @@ export async function inspectWebsite(website, { maxPages = 5, timeoutMs = 20000 
       error: err.message,
     };
   } finally {
+    unregisterContext();
     await browser.close();
   }
 }

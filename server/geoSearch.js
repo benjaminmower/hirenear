@@ -1,3 +1,5 @@
+import { clampScoutRadius, getErrorMessage, MIN_SCOUT_RADIUS_METERS } from './limits.js';
+
 const EXCLUDED_PLACE_TYPES = new Set([
   'atm',
   'bus_station',
@@ -195,7 +197,7 @@ export async function searchJobsForCompany(companyName, cache, locationLabel = '
   const data = await response.json();
 
   if (!response.ok || data.error) {
-    console.error(`[${companyName}] SearchAPI company job error:`, data.error || response.status);
+    console.error(`[${companyName}] SearchAPI company job error:`, getErrorMessage(data.error || response.status));
     return null;
   }
 
@@ -264,13 +266,13 @@ async function searchJobsByTitle({ title, locationLabel, cache }) {
   const response = await fetch(`https://www.searchapi.io/api/v1/search?${params}`);
   const data = await response.json();
   if (!response.ok || data.error) {
-    console.error(`[${cleanTitle}] SearchAPI title job error:`, data.error || response.status);
+    console.error('[Scout job discovery] SearchAPI title job error:', getErrorMessage(data.error || response.status));
     return [];
   }
 
   const jobs = (data.jobs || data.jobs_results || []).map(job => mapSearchApiJob(job, job.company_name));
   cache?.set(cacheKey, jobs);
-  console.log('[Scout job discovery] SearchAPI jobs:', { title: cleanTitle, location: locationLabel, count: jobs.length });
+  console.log('[Scout job discovery] SearchAPI jobs:', { location: locationLabel, count: jobs.length });
   return jobs;
 }
 
@@ -366,6 +368,7 @@ function isNegativeBusiness(place, negativeBusinessTypes = []) {
 }
 
 export async function discoverResumeMatchedPlaces({ lat, lng, radius, locationLabel, signals = {}, cache }) {
+  const safeRadius = Number.isFinite(clampScoutRadius(radius)) ? clampScoutRadius(radius) : 1000;
   const candidates = [];
   let jobCandidateCount = 0;
   let employerCandidateCount = 0;
@@ -381,7 +384,7 @@ export async function discoverResumeMatchedPlaces({ lat, lng, radius, locationLa
     try {
       jobs = await searchJobsByTitle({ title, locationLabel, cache });
     } catch (err) {
-      console.error(`[${title}] Scout job discovery failed:`, err.message);
+      console.error('[Scout job discovery] failed:', getErrorMessage(err));
       continue;
     }
     for (const job of jobs.slice(0, 10)) {
@@ -401,9 +404,9 @@ export async function discoverResumeMatchedPlaces({ lat, lng, radius, locationLa
       : `${queryText} near ${locationLabel}`;
     let places = [];
     try {
-      places = filterAndRankPlaces(await fetchPlacesTextSearch({ query: placeQuery, lat, lng, radius }), 10);
+      places = filterAndRankPlaces(await fetchPlacesTextSearch({ query: placeQuery, lat, lng, radius: safeRadius }), 10);
     } catch (err) {
-      console.error(`[${placeQuery}] Scout employer discovery failed:`, err.message);
+      console.error('[Scout employer discovery] failed:', getErrorMessage(err));
       continue;
     }
     for (const place of places) {
@@ -419,9 +422,9 @@ export async function discoverResumeMatchedPlaces({ lat, lng, radius, locationLa
   if ((jobCandidateCount + employerCandidateCount) < minimumBeforeBackfill) {
     let nearby = [];
     try {
-      nearby = filterAndRankPlaces(await fetchNearbyPlaces(lat, lng, radius));
+      nearby = filterAndRankPlaces(await fetchNearbyPlaces(lat, lng, safeRadius));
     } catch (err) {
-      console.error('[Scout nearby backfill] failed:', err.message);
+      console.error('[Scout nearby backfill] failed:', getErrorMessage(err));
     }
     for (const place of nearby) {
       const demotion = isNegativeBusiness(place, negativeBusinessTypes) ? 120 : 0;
@@ -455,30 +458,23 @@ export async function discoverResumeMatchedPlaces({ lat, lng, radius, locationLa
 
   console.log('[Scout discovery] candidates:', {
     location: locationLabel,
-    jobTitles,
-    employerQueries,
     counts: {
       jobSearch: jobCandidateCount,
       employerSearch: employerCandidateCount,
       nearbyBackfill: nearbyCandidateCount,
       returned: discovered.length,
     },
-    top: discovered.slice(0, 5).map(item => ({
-      name: item.name,
-      source: item.discoverySource,
-      score: item.discoveryScore,
-      query: item.discoveryQuery,
-    })),
+    topSources: discovered.slice(0, 5).map(item => item.discoverySource),
   });
 
   return discovered;
 }
 
-export function createNearbyJobsHandler({ cache, trackSearch, recordSearch, mapboxToken }) {
+export function createNearbyJobsHandler({ cache, mapboxToken }) {
   return async function nearbyJobsHandler(req, res) {
     const lat = req.query.lat === undefined ? SALT_LAKE_CITY.lat : Number(req.query.lat);
     const lng = req.query.lng === undefined ? SALT_LAKE_CITY.lng : Number(req.query.lng);
-    const radius = Number(req.query.radius || 1000);
+    const radius = clampScoutRadius(req.query.radius || 1000);
 
     const derivedLabel = await reverseGeocode(lat, lng, mapboxToken);
     const locationLabel = derivedLabel || 'Salt Lake City, UT';
@@ -487,8 +483,8 @@ export function createNearbyJobsHandler({ cache, trackSearch, recordSearch, mapb
       return res.status(400).json({ error: 'lat and lng are required' });
     }
 
-    if (!Number.isFinite(radius) || radius < 100 || radius > 5000) {
-      return res.status(400).json({ error: 'radius must be between 100 and 5000 meters' });
+    if (!Number.isFinite(radius) || radius < MIN_SCOUT_RADIUS_METERS) {
+      return res.status(400).json({ error: `radius must be at least ${MIN_SCOUT_RADIUS_METERS} meters` });
     }
 
     const roundedLat = lat.toFixed(2);
@@ -496,20 +492,6 @@ export function createNearbyJobsHandler({ cache, trackSearch, recordSearch, mapb
     const cacheKey = `nearby:v2:${roundedLat}:${roundedLng}:${radius}:${locationLabel}`;
     const cached = cache.get(cacheKey);
     if (cached) return res.json({ ...cached, fromCache: true });
-
-    const ip = req.ip || req.connection.remoteAddress;
-    const rateStatus = trackSearch(ip);
-
-    if (rateStatus.count >= rateStatus.limit) {
-      return res.status(429).json({
-        error: 'Search limit reached. Please try again tomorrow.',
-        rateLimit: {
-          limit: rateStatus.limit,
-          remaining: 0,
-          resetIn: '24 hours',
-        },
-      });
-    }
 
     try {
       const places = await fetchNearbyPlaces(lat, lng, radius);
@@ -560,11 +542,10 @@ export function createNearbyJobsHandler({ cache, trackSearch, recordSearch, mapb
       };
 
       cache.set(cacheKey, payload);
-      recordSearch(ip);
       res.json({ ...payload, fromCache: false });
     } catch (err) {
-      console.error('Nearby jobs error:', err);
-      res.status(500).json({ error: err.message || 'Failed to fetch nearby jobs' });
+      console.error('Nearby jobs error:', getErrorMessage(err));
+      res.status(500).json({ error: getErrorMessage(err) || 'Failed to fetch nearby jobs' });
     }
   };
 }

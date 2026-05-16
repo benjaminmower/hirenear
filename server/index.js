@@ -1,23 +1,50 @@
 import express from 'express';
 import cors from 'cors';
+import rateLimit from 'express-rate-limit';
 import NodeCache from 'node-cache';
 import { config } from 'dotenv';
 import { createNearbyJobsHandler } from './geoSearch.js';
+import {
+  clampScoutRadius,
+  getClientIp,
+  getErrorMessage,
+  MAX_RESUME_BYTES,
+  MAX_SCOUT_RADIUS_METERS,
+  MAX_SSE_CONNECTIONS_PER_IP,
+  MIN_SCOUT_RADIUS_METERS,
+  SSE_CONNECTION_TTL_MS,
+} from './limits.js';
 import { migrate } from './db.js';
-import { createScoutRun, deleteScoutRun, getScoutRun, runScout, visitBusiness, skipBusiness, subscribeScoutRun } from './scoutRunner.js';
+import { cleanupStaleScoutRuns, createScoutRun, deleteScoutRun, getScoutRun, runScout, visitBusiness, skipBusiness, subscribeScoutRun } from './scoutRunner.js';
 
 config();
 
 const app = express();
 const cache = new NodeCache({ stdTTL: 86400 }); // 24 hour cache to respect free tier
+const sseConnections = new Map();
 
-// Rate limiter: track searches by IP to stay under 100/month free tier
-const searchCounts = new Map();
-const RATE_LIMIT_WINDOW = 24 * 60 * 60 * 1000; // 24 hours
-const MAX_SEARCHES_PER_DAY = Number(process.env.MAX_SEARCHES_PER_DAY || 3); // ~90/month with safety margin by default
-
+app.set('trust proxy', 1);
 app.use(cors({ origin: 'http://localhost:5173' }));
 app.use(express.json({ limit: '1mb' }));
+app.use('/api', rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: 'Too many requests from this IP. General API access is limited to 60 requests per minute.',
+  },
+}));
+
+const scoutRunRateLimit = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: 'Too many scout runs from this IP. Scout runs are limited to 10 per hour.',
+  },
+});
 
 const SEARCH_API_KEY = process.env.SEARCH_API_KEY;
 const MAPBOX_TOKEN = process.env.MAPBOX_TOKEN;
@@ -27,27 +54,19 @@ if (!SEARCH_API_KEY || !MAPBOX_TOKEN || !GOOGLE_PLACES_API_KEY) {
   console.warn('⚠️  Missing env vars. Copy .env.example to .env and fill in your keys.');
 }
 
-// Track searches for rate limiting
-function trackSearch(ip) {
-  const now = Date.now();
-  if (!searchCounts.has(ip)) {
-    searchCounts.set(ip, []);
-  }
-
-  const counts = searchCounts.get(ip).filter(t => now - t < RATE_LIMIT_WINDOW);
-  searchCounts.set(ip, counts);
-
-  return {
-    count: counts.length,
-    limit: MAX_SEARCHES_PER_DAY,
-    remaining: Math.max(0, MAX_SEARCHES_PER_DAY - counts.length),
-  };
+function trackSseConnection(ip, connection) {
+  const connections = sseConnections.get(ip) || new Set();
+  connections.add(connection);
+  sseConnections.set(ip, connections);
 }
 
-function recordSearch(ip) {
-  const counts = searchCounts.get(ip) || [];
-  counts.push(Date.now());
-  searchCounts.set(ip, counts);
+function releaseSseConnection(ip, connection) {
+  const connections = sseConnections.get(ip);
+  if (!connections) return;
+  connections.delete(connection);
+  if (connections.size === 0) {
+    sseConnections.delete(ip);
+  }
 }
 
 // --- Geocode with company name for precise office location ---
@@ -75,7 +94,7 @@ async function geocodeLocation(location, company = null) {
         return result;
       }
     } catch (err) {
-      console.error(`Geocoding error for "${query}":`, err.message);
+      console.error(`Geocoding error for "${query}":`, getErrorMessage(err));
     }
   }
 
@@ -91,21 +110,6 @@ app.get('/api/jobs', async (req, res) => {
   const cacheKey = `jobs:${query}:${location}:${chips}`;
   const cached = cache.get(cacheKey);
   if (cached) return res.json({ jobs: cached, fromCache: true });
-
-  // Check rate limit for new searches (only if NOT cached)
-  const ip = req.ip || req.connection.remoteAddress;
-  const rateStatus = trackSearch(ip);
-
-  if (rateStatus.count >= rateStatus.limit) {
-    return res.status(429).json({
-      error: 'Search limit reached. Please try again tomorrow.',
-      rateLimit: {
-        limit: rateStatus.limit,
-        remaining: 0,
-        resetIn: '24 hours',
-      },
-    });
-  }
 
   try {
     const params = new URLSearchParams({
@@ -161,26 +165,23 @@ app.get('/api/jobs', async (req, res) => {
       });
 
     cache.set(cacheKey, jobs);
-    recordSearch(ip); // Record successful search for rate limiting
     res.json({ jobs, fromCache: false });
   } catch (err) {
-    console.error('Job search error:', err);
+    console.error('Job search error:', getErrorMessage(err));
     res.status(500).json({ error: 'Failed to fetch jobs' });
   }
 });
 
 app.get('/api/nearby-jobs', createNearbyJobsHandler({
   cache,
-  trackSearch,
-  recordSearch,
   mapboxToken: MAPBOX_TOKEN,
 }));
 
-app.post('/api/scout-runs', async (req, res) => {
+app.post('/api/scout-runs', scoutRunRateLimit, async (req, res) => {
   const resumeText = String(req.body.resumeText || '').trim();
   const lat = Number(req.body.lat);
   const lng = Number(req.body.lng);
-  const radius = Number(req.body.radius || 1000);
+  const radius = clampScoutRadius(req.body.radius || 1000);
   const locationLabel = req.body.locationLabel || null;
   const targetLanes = Array.isArray(req.body.targetLanes)
     ? req.body.targetLanes.map(item => String(item).trim()).filter(Boolean).slice(0, 3)
@@ -190,14 +191,17 @@ app.post('/api/scout-runs', async (req, res) => {
   if (resumeText.length < 40) {
     return res.status(400).json({ error: 'resumeText is required and must be at least 40 characters' });
   }
+  if (Buffer.byteLength(resumeText, 'utf8') > MAX_RESUME_BYTES) {
+    return res.status(400).json({ error: 'resumeText must be 15KB or smaller before starting a scout run' });
+  }
   if (targetLanes.length === 0) {
     return res.status(400).json({ error: 'Choose at least one kind of work to target' });
   }
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
     return res.status(400).json({ error: 'lat and lng are required' });
   }
-  if (!Number.isFinite(radius) || radius < 100 || radius > 5000) {
-    return res.status(400).json({ error: 'radius must be between 100 and 5000 meters' });
+  if (!Number.isFinite(radius) || radius < MIN_SCOUT_RADIUS_METERS) {
+    return res.status(400).json({ error: `radius must be at least ${MIN_SCOUT_RADIUS_METERS} meters and no more than ${MAX_SCOUT_RADIUS_METERS} meters` });
   }
 
   try {
@@ -205,8 +209,8 @@ app.post('/api/scout-runs', async (req, res) => {
     res.status(202).json({ runId });
     runScout(runId, cache);
   } catch (err) {
-    console.error('Create scout run error:', err);
-    res.status(500).json({ error: err.message || 'Failed to create scout run' });
+    console.error('Create scout run error:', getErrorMessage(err));
+    res.status(500).json({ error: getErrorMessage(err) || 'Failed to create scout run' });
   }
 });
 
@@ -216,8 +220,8 @@ app.get('/api/scout-runs/:runId', async (req, res) => {
     if (!run) return res.status(404).json({ error: 'Scout run not found' });
     res.json(run);
   } catch (err) {
-    console.error('Get scout run error:', err);
-    res.status(500).json({ error: err.message || 'Failed to load scout run' });
+    console.error('Get scout run error:', getErrorMessage(err));
+    res.status(500).json({ error: getErrorMessage(err) || 'Failed to load scout run' });
   }
 });
 
@@ -227,8 +231,8 @@ app.delete('/api/scout-runs/:runId', async (req, res) => {
     if (!deleted) return res.status(404).json({ error: 'Scout run not found' });
     res.status(204).end();
   } catch (err) {
-    console.error('Delete scout run error:', err);
-    res.status(500).json({ error: err.message || 'Failed to delete scout run' });
+    console.error('Delete scout run error:', getErrorMessage(err));
+    res.status(500).json({ error: getErrorMessage(err) || 'Failed to delete scout run' });
   }
 });
 
@@ -237,8 +241,8 @@ app.post('/api/scout-runs/:runId/visit/:placeId', async (req, res) => {
     res.status(202).json({ ok: true });
     visitBusiness(req.params.runId, req.params.placeId, cache);
   } catch (err) {
-    console.error('Visit business error:', err);
-    res.status(500).json({ error: err.message || 'Failed to visit business' });
+    console.error('Visit business error:', getErrorMessage(err));
+    res.status(500).json({ error: getErrorMessage(err) || 'Failed to visit business' });
   }
 });
 
@@ -247,35 +251,67 @@ app.post('/api/scout-runs/:runId/skip/:placeId', async (req, res) => {
     res.status(202).json({ ok: true });
     skipBusiness(req.params.runId, req.params.placeId);
   } catch (err) {
-    console.error('Skip business error:', err);
-    res.status(500).json({ error: err.message || 'Failed to skip business' });
+    console.error('Skip business error:', getErrorMessage(err));
+    res.status(500).json({ error: getErrorMessage(err) || 'Failed to skip business' });
   }
 });
 
 app.get('/api/scout-runs/:runId/events', (req, res) => {
+  const ip = getClientIp(req);
+  const currentConnections = sseConnections.get(ip);
+  if (currentConnections && currentConnections.size >= MAX_SSE_CONNECTIONS_PER_IP) {
+    return res.status(429).json({
+      error: `Too many open scout event streams from this IP. SSE connections are limited to ${MAX_SSE_CONNECTIONS_PER_IP} concurrent connections.`,
+    });
+  }
+
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache, no-transform',
     Connection: 'keep-alive',
   });
 
+  let cleanedUp = false;
+  let unsubscribe = () => {};
+  const connection = {};
+  const cleanup = () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    clearInterval(heartbeat);
+    clearTimeout(connectionTimeout);
+    unsubscribe();
+    releaseSseConnection(ip, connection);
+    if (!res.writableEnded) {
+      res.end();
+    }
+  };
   const send = ({ type, payload }) => {
+    if (cleanedUp || res.writableEnded) return;
     res.write(`event: ${type}\n`);
     res.write(`data: ${JSON.stringify(payload)}\n\n`);
+    if (type === 'complete' || type === 'error') {
+      cleanup();
+    }
   };
 
   res.write(`event: connected\n`);
   res.write(`data: ${JSON.stringify({ runId: req.params.runId })}\n\n`);
 
-  const unsubscribe = subscribeScoutRun(req.params.runId, send);
+  unsubscribe = subscribeScoutRun(req.params.runId, send);
   const heartbeat = setInterval(() => {
     res.write(`event: heartbeat\n`);
     res.write(`data: {}\n\n`);
   }, 15000);
+  const connectionTimeout = setTimeout(() => {
+    send({
+      type: 'error',
+      payload: { error: 'Scout event stream closed after 10 minutes. Reconnect to continue receiving updates.' },
+    });
+  }, SSE_CONNECTION_TTL_MS);
+  trackSseConnection(ip, connection);
 
   req.on('close', () => {
-    clearInterval(heartbeat);
-    unsubscribe();
+    cleanup();
   });
 });
 
@@ -284,10 +320,15 @@ app.get('/api/health', (_, res) => res.json({ ok: true }));
 
 const PORT = process.env.PORT || 3001;
 migrate()
-  .then(() => {
+  .then(async () => {
+    try {
+      await cleanupStaleScoutRuns();
+    } catch (err) {
+      console.error('Startup scout cleanup error:', getErrorMessage(err));
+    }
     app.listen(PORT, () => console.log(`🗺️  jobmap server running on http://localhost:${PORT}`));
   })
   .catch(err => {
-    console.error('Database migration failed:', err.stack || err.message || err);
+    console.error('Database migration failed:', getErrorMessage(err));
     process.exit(1);
   });

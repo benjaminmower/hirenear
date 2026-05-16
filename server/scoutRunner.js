@@ -1,13 +1,15 @@
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
 import { discoverResumeMatchedPlaces, resolveLocationLabel, searchJobsForCompany } from './geoSearch.js';
+import { getErrorMessage } from './limits.js';
 import { query } from './db.js';
-import { inspectWebsite, normalizeDomain } from './websiteInspector.js';
+import { closeRunInspectionSessions, inspectWebsite, normalizeDomain } from './websiteInspector.js';
 import { matchScoutRunBatch, extractResumeSignals } from './resumeMatcher.js';
 
 const events = new Map();
 const CONCURRENCY = Number(process.env.SCOUT_INSPECTION_CONCURRENCY || 2);
 const TTL_HOURS = Number(process.env.SCOUT_INSPECTION_TTL_HOURS || 48);
+const STALE_RUNNING_RUN_MINUTES = 15;
 
 function emitterFor(runId) {
   if (!events.has(runId)) events.set(runId, new EventEmitter());
@@ -76,7 +78,7 @@ export async function createScoutRun({ resumeText, lat, lng, radius, locationLab
   try {
     extractedSignals = await extractResumeSignals(resumeText, targetLanes);
   } catch (err) {
-    console.error('[createScoutRun] extraction failed:', err.message);
+    console.error('[createScoutRun] extraction failed:', getErrorMessage(err));
   }
 
   await query(
@@ -134,8 +136,38 @@ export async function getScoutRun(runId) {
 }
 
 export async function deleteScoutRun(runId) {
+  await closeRunInspectionSessions(runId);
   const result = await query('DELETE FROM scout_runs WHERE id = $1 RETURNING id', [runId]);
   return result.rowCount > 0;
+}
+
+export async function cleanupStaleScoutRuns() {
+  const result = await query(
+    `UPDATE scout_runs
+     SET status = 'failed',
+         error = $2,
+         completed_at = COALESCE(completed_at, now()),
+         updated_at = now()
+     WHERE status = 'running'
+       AND updated_at < now() - ($1::text || ' minutes')::interval
+     RETURNING id`,
+    [STALE_RUNNING_RUN_MINUTES, 'Scout run expired after 15 minutes without completing. Please start a new run.']
+  );
+
+  const runIds = result.rows.map(row => row.id);
+  if (runIds.length === 0) return 0;
+
+  await query(
+    `UPDATE scout_businesses
+     SET inspection_status = 'failed',
+         updated_at = now()
+     WHERE run_id = ANY($1::text[])
+       AND inspection_status IN ('queued', 'checking')`,
+    [runIds]
+  );
+
+  await Promise.all(runIds.map(runId => closeRunInspectionSessions(runId)));
+  return runIds.length;
 }
 
 async function getFreshInspection(cacheKey) {
@@ -281,7 +313,7 @@ async function inspectBusiness({ run, business, cache }) {
       error: cached.error,
     };
   } else {
-    inspection = await inspectWebsite(business.website);
+    inspection = await inspectWebsite(business.website, { runId: run.id });
     await saveInspection(cacheKey, business.place_id, business.website, inspection);
   }
 
@@ -431,12 +463,13 @@ export async function runScout(runId, cache) {
     }
     // Businesses are now queued; the user drives website inspection via visitBusiness().
   } catch (err) {
-    console.error('Scout run error:', err);
+    console.error('Scout run error:', getErrorMessage(err));
+    await closeRunInspectionSessions(runId).catch(() => {});
     await query(
       `UPDATE scout_runs SET status = 'failed', error = $2, updated_at = now() WHERE id = $1`,
-      [runId, err.message]
+      [runId, getErrorMessage(err)]
     ).catch(() => {});
-    emitRun(runId, 'error', { error: err.message });
+    emitRun(runId, 'error', { error: getErrorMessage(err) });
   }
 }
 
@@ -467,7 +500,7 @@ export async function visitBusiness(runId, placeId, cache) {
     // Check if all visited businesses are done, emit complete if so
     await maybeComplete(run);
   } catch (err) {
-    console.error('visitBusiness error:', err);
+    console.error('visitBusiness error:', getErrorMessage(err));
   }
 }
 
@@ -490,7 +523,7 @@ export async function skipBusiness(runId, placeId) {
     const runResult = await query('SELECT * FROM scout_runs WHERE id = $1', [runId]);
     await maybeComplete(runResult.rows[0]);
   } catch (err) {
-    console.error('skipBusiness error:', err);
+    console.error('skipBusiness error:', getErrorMessage(err));
   }
 }
 

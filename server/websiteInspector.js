@@ -295,7 +295,7 @@ function summarizeSignal(signal, opportunities) {
 async function readPageText(page, context, url, timeoutMs) {
   await assertSafeHttpUrl(url);
 
-  let timedOut = false;
+  let closedForTimeout = false;
   let timeoutId = null;
   const visitPromise = (async () => {
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
@@ -305,13 +305,13 @@ async function readPageText(page, context, url, timeoutMs) {
       .slice(0, 12000);
     return { title, text };
   })().catch(err => {
-    if (timedOut) return null;
+    if (closedForTimeout) return null;
     throw err;
   });
 
   const timeoutPromise = new Promise((_, reject) => {
     timeoutId = setTimeout(() => {
-      timedOut = true;
+      closedForTimeout = true;
       void context.close().catch(() => {});
       reject(new Error(`Page visit timed out after ${Math.round(timeoutMs / 1000)} seconds`));
     }, timeoutMs);
@@ -319,7 +319,7 @@ async function readPageText(page, context, url, timeoutMs) {
 
   try {
     const result = await Promise.race([visitPromise, timeoutPromise]);
-    if (timedOut || !result) {
+    if (closedForTimeout || !result) {
       throw new Error(`Page visit timed out after ${Math.round(timeoutMs / 1000)} seconds`);
     }
     return result;

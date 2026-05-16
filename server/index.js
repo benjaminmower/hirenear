@@ -307,6 +307,7 @@ app.get('/api/scout-runs/:runId/events', (req, res) => {
       type: 'error',
       payload: { error: `Scout event stream closed after ${Math.round(SSE_CONNECTION_TTL_MS / 60000)} minutes. Reconnect to continue receiving updates.` },
     });
+    cleanup();
   }, SSE_CONNECTION_TTL_MS);
   trackSseConnection(ip, connection);
 

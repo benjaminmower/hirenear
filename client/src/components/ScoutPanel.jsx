@@ -28,6 +28,7 @@ const TARGET_LANES = [
 
 const SAVED_SEARCHES_KEY = 'hirenear:savedScoutSearches';
 const SETUP_STEPS = ['area', 'resume', 'lanes', 'launch'];
+const MAX_MATCH_SIGNALS = 6;
 
 const STEP_META = {
   area: {
@@ -95,7 +96,7 @@ function validMatchSignals(signals) {
   return signals
     .filter(item => item && typeof item.label === 'string' && item.label.trim())
     .filter(item => ['positive', 'neutral', 'negative'].includes(item.weight))
-    .slice(0, 6);
+    .slice(0, MAX_MATCH_SIGNALS);
 }
 
 function bestBusinessLink(business, opportunities) {

@@ -2,6 +2,8 @@ import Anthropic from '@anthropic-ai/sdk';
 import { createHash } from 'crypto';
 
 const DEFAULT_MODEL = process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001';
+const MAX_SIGNAL_LABEL_LENGTH = 60;
+const MAX_MATCH_SIGNALS = 6;
 
 let client = null;
 
@@ -156,13 +158,13 @@ function normalizeMatch(raw) {
     ? raw.signals
       .filter(item => item && typeof item === 'object')
       .map(item => ({
-        label: String(item.label || '').trim().slice(0, 60),
+        label: String(item.label || '').trim().slice(0, MAX_SIGNAL_LABEL_LENGTH),
         weight: ['positive', 'neutral', 'negative'].includes(String(item.weight || '').toLowerCase())
           ? String(item.weight).toLowerCase()
           : null,
       }))
       .filter(item => item.label && item.weight)
-      .slice(0, 6)
+      .slice(0, MAX_MATCH_SIGNALS)
     : [];
   const matchSummary = typeof raw.summary === 'string' && raw.summary.trim()
     ? raw.summary.trim().slice(0, 500)
@@ -327,8 +329,8 @@ export async function matchResumeToBusiness({ resumeText, business, evidence, op
           '{"fitScore":87,"summary":"...","signals":[{"label":"...","weight":"positive"}]}',
           'fitScore must be 0-100.',
           'summary must be 1-2 plain-English sentences.',
-          'signals must include 2-6 items.',
-          'Each signal needs label under 60 characters and weight positive|neutral|negative.',
+          `signals must include 2-${MAX_MATCH_SIGNALS} items.`,
+          `Each signal needs label under ${MAX_SIGNAL_LABEL_LENGTH} characters and weight positive|neutral|negative.`,
           'Signals must be specific to this candidate and this business.',
           'No markdown fences, no preamble, JSON only.',
         ].join(' '),
@@ -367,7 +369,7 @@ export async function matchScoutRunBatch({ resumeText, targetLanes = [], avoidTe
             'Return JSON with keys summary, businessMatches, opportunityMatches.',
             'businessMatches items: businessId, matchLevel low|medium|high, fitScore 0-100, reason, nextStep, summary, signals.',
             'summary must be 1-2 plain-English sentences specific to this candidate and business.',
-            'signals must contain 2-6 items with shape {"label":"...","weight":"positive|neutral|negative"} and labels under 60 chars.',
+            `signals must contain 2-${MAX_MATCH_SIGNALS} items with shape {"label":"...","weight":"positive|neutral|negative"} and labels under ${MAX_SIGNAL_LABEL_LENGTH} chars.`,
             'opportunityMatches items: opportunityId, businessId, matchLevel low|medium|high, fitScore 0-100, reason, nextStep.',
             'Do not invent openings. Use only the provided evidence and opportunities.',
             'Treat targetLanes as the user intent and heavily penalize roles outside those lanes.',

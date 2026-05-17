@@ -152,11 +152,28 @@ function clampScore(value) {
 function normalizeMatch(raw) {
   const fitScore = clampScore(raw.fitScore);
   const matchLevel = raw.matchLevel || (fitScore >= 75 ? 'high' : fitScore >= 45 ? 'medium' : 'low');
+  const matchSignals = Array.isArray(raw.signals)
+    ? raw.signals
+      .filter(item => item && typeof item === 'object')
+      .map(item => ({
+        label: String(item.label || '').trim().slice(0, 60),
+        weight: ['positive', 'neutral', 'negative'].includes(String(item.weight || '').toLowerCase())
+          ? String(item.weight).toLowerCase()
+          : null,
+      }))
+      .filter(item => item.label && item.weight)
+      .slice(0, 6)
+    : [];
+  const matchSummary = typeof raw.summary === 'string' && raw.summary.trim()
+    ? raw.summary.trim().slice(0, 500)
+    : null;
   return {
     matchLevel,
     fitScore,
     reason: String(raw.reason || 'Resume fit could not be explained.').slice(0, 500),
     nextStep: String(raw.nextStep || 'Review the website evidence before contacting this business.').slice(0, 500),
+    matchSummary,
+    matchSignals,
     raw,
   };
 }
@@ -305,7 +322,16 @@ export async function matchResumeToBusiness({ resumeText, business, evidence, op
     messages: [{
       role: 'user',
       content: JSON.stringify({
-        task: 'Return JSON with matchLevel low|medium|high, fitScore 0-100, reason, nextStep. Do not invent openings.',
+        task: [
+          'Return JSON only in this exact shape:',
+          '{"fitScore":87,"summary":"...","signals":[{"label":"...","weight":"positive"}]}',
+          'fitScore must be 0-100.',
+          'summary must be 1-2 plain-English sentences.',
+          'signals must include 2-6 items.',
+          'Each signal needs label under 60 characters and weight positive|neutral|negative.',
+          'Signals must be specific to this candidate and this business.',
+          'No markdown fences, no preamble, JSON only.',
+        ].join(' '),
         resumeText,
         business,
         evidence,
@@ -339,12 +365,15 @@ export async function matchScoutRunBatch({ resumeText, targetLanes = [], avoidTe
         content: JSON.stringify({
           task: [
             'Return JSON with keys summary, businessMatches, opportunityMatches.',
-            'businessMatches items: businessId, matchLevel low|medium|high, fitScore 0-100, reason, nextStep.',
+            'businessMatches items: businessId, matchLevel low|medium|high, fitScore 0-100, reason, nextStep, summary, signals.',
+            'summary must be 1-2 plain-English sentences specific to this candidate and business.',
+            'signals must contain 2-6 items with shape {"label":"...","weight":"positive|neutral|negative"} and labels under 60 chars.',
             'opportunityMatches items: opportunityId, businessId, matchLevel low|medium|high, fitScore 0-100, reason, nextStep.',
             'Do not invent openings. Use only the provided evidence and opportunities.',
             'Treat targetLanes as the user intent and heavily penalize roles outside those lanes.',
             'If a role title matches avoidTerms, mark it low fit unless evidence clearly shows a different role.',
             'Keep reasons and nextStep concise.',
+            'Return only strict JSON. No markdown fences or preamble.',
           ].join(' '),
           resumeText,
           targetLanes,

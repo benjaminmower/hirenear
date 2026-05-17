@@ -34,6 +34,8 @@ function businessRowToClient(row) {
     signalStrength: row.signal_strength,
     signalSummary: row.signal_summary,
     fitScore: row.fit_score,
+    matchSummary: row.match_summary,
+    matchSignals: row.match_signals || [],
     fitReason: row.fit_reason,
     nextStep: row.next_step,
     discoverySource: row.discovery_source,
@@ -340,9 +342,16 @@ async function applyBatchMatches(run, businesses, opportunities) {
 
     await query(
       `UPDATE scout_businesses
-       SET fit_score = $2, fit_reason = $3, next_step = $4, updated_at = now()
-       WHERE id = $1`,
-      [match.businessId, match.fitScore, match.reason, match.nextStep]
+       SET fit_score = $2, fit_reason = $3, next_step = $4, match_summary = $5, match_signals = $6, updated_at = now()
+        WHERE id = $1`,
+      [
+        match.businessId,
+        match.fitScore,
+        match.reason,
+        match.nextStep,
+        match.matchSummary || null,
+        JSON.stringify(match.matchSignals || []),
+      ]
     );
 
     const updatedBusiness = await query('SELECT * FROM scout_businesses WHERE id = $1', [match.businessId]);

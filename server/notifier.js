@@ -38,6 +38,28 @@ ${baseUrl}/for-businesses
 — Hirenear`;
 }
 
+function buildDetailedBody(businessName, fitScore, summary, signals = []) {
+  const baseUrl = process.env.BASE_URL || 'https://hirenear.app';
+  const positiveSignals = signals
+    .filter(item => item && item.weight === 'positive' && item.label)
+    .slice(0, 3);
+  const bullets = positiveSignals.map(item => `- ${item.label}`).join('\n');
+
+  return `Hi ${businessName},
+
+Someone nearby reviewed your business on Hirenear and scored ${fitScore}% match.
+
+Here's why:
+${bullets}
+
+${summary}
+
+We're sending you this lead for free. If you'd like to keep receiving qualified local candidates, visit:
+${baseUrl}/for-businesses
+
+— Hirenear`;
+}
+
 export async function notifyBusinessIfQualified(business) {
   try {
     const businessId = business?.id;
@@ -50,7 +72,7 @@ export async function notifyBusinessIfQualified(business) {
     if (!contactEmail) return;
 
     const existing = await query(
-      'SELECT id, name, fit_score, contact_email, notified_at FROM scout_businesses WHERE id = $1',
+      'SELECT id, name, fit_score, contact_email, notified_at, match_summary, match_signals FROM scout_businesses WHERE id = $1',
       [businessId]
     );
     const row = existing.rows[0];
@@ -62,11 +84,22 @@ export async function notifyBusinessIfQualified(business) {
     const activeTransporter = getTransporter();
     if (!from || !activeTransporter) return;
 
+    const signals = Array.isArray(row.match_signals)
+      ? row.match_signals
+        .filter(item => item && typeof item.label === 'string' && item.label.trim() && item.weight === 'positive')
+        .map(item => ({ label: item.label.trim(), weight: 'positive' }))
+      : [];
+    const hasSignals = signals.length > 0;
+    const hasSummary = typeof row.match_summary === 'string' && row.match_summary.trim();
+    const useDetailedBody = hasSignals && hasSummary;
+
     await activeTransporter.sendMail({
       from,
       to: row.contact_email,
       subject: SUBJECT,
-      text: buildBody(row.name, row.fit_score),
+      text: useDetailedBody
+        ? buildDetailedBody(row.name, row.fit_score, row.match_summary.trim(), signals)
+        : buildBody(row.name, row.fit_score),
     });
 
     await query(

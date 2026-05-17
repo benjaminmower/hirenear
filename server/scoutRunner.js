@@ -4,6 +4,7 @@ import { discoverResumeMatchedPlaces, resolveLocationLabel, searchJobsForCompany
 import { query } from './db.js';
 import { inspectWebsite, normalizeDomain } from './websiteInspector.js';
 import { matchScoutRunBatch, extractResumeSignals } from './resumeMatcher.js';
+import { notifyBusinessIfQualified } from './notifier.js';
 
 const events = new Map();
 const CONCURRENCY = Number(process.env.SCOUT_INSPECTION_CONCURRENCY || 2);
@@ -38,6 +39,7 @@ function businessRowToClient(row) {
     discoverySource: row.discovery_source,
     discoveryQuery: row.discovery_query,
     discoveryScore: row.discovery_score,
+    contactEmail: row.contact_email,
     evidence: row.evidence || [],
   };
 }
@@ -303,14 +305,15 @@ async function inspectBusiness({ run, business, cache }) {
   await query(
     `UPDATE scout_businesses
      SET inspection_status = $2, signal_strength = $3, signal_summary = $4, evidence = $5,
-         updated_at = now()
-     WHERE id = $1`,
+         contact_email = $6, updated_at = now()
+      WHERE id = $1`,
     [
       business.id,
       inspection.status,
       inspection.signalStrength,
       inspection.signalSummary,
       JSON.stringify(inspection.evidence || []),
+      inspection.contactEmail || null,
     ]
   );
 
@@ -343,6 +346,7 @@ async function applyBatchMatches(run, businesses, opportunities) {
     );
 
     const updatedBusiness = await query('SELECT * FROM scout_businesses WHERE id = $1', [match.businessId]);
+    notifyBusinessIfQualified(updatedBusiness.rows[0]);
     emitRun(run.id, 'business_update', { business: businessRowToClient(updatedBusiness.rows[0]) });
     emitRun(run.id, 'match_update', { match: matchRowToClient(row) });
   }

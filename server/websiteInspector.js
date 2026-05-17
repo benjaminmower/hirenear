@@ -173,6 +173,11 @@ function summarizeSignal(signal, opportunities) {
   return 'No hiring signal found on checked pages';
 }
 
+function extractContactEmail(text) {
+  const match = String(text || '').match(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i);
+  return match ? match[0].toLowerCase() : null;
+}
+
 export async function inspectWebsite(website, { maxPages = 5, timeoutMs = 20000 } = {}) {
   const domain = normalizeDomain(website);
   if (!website || !domain) {
@@ -195,6 +200,7 @@ export async function inspectWebsite(website, { maxPages = 5, timeoutMs = 20000 
   const seen = new Set();
   const evidence = [];
   const opportunities = [];
+  let contactEmail = null;
   let bestSignal = 'none';
 
   try {
@@ -211,6 +217,8 @@ export async function inspectWebsite(website, { maxPages = 5, timeoutMs = 20000 
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: Math.min(8000, timeoutMs) });
         const title = await page.title();
         const text = (await page.locator('body').innerText({ timeout: 3000 })).replace(/\s+/g, ' ').slice(0, 12000);
+        const pageEmail = extractContactEmail(text);
+        if (pageEmail && !contactEmail) contactEmail = pageEmail;
         const classification = classifyPage({ url, title, text });
 
         if (classification.evidence) evidence.push(classification.evidence);
@@ -245,6 +253,7 @@ export async function inspectWebsite(website, { maxPages = 5, timeoutMs = 20000 
       signalSummary: summarizeSignal(bestSignal, opportunities),
       evidence,
       opportunities,
+      contactEmail,
       inspectedPages: seen.size,
     };
   } catch (err) {
@@ -254,6 +263,7 @@ export async function inspectWebsite(website, { maxPages = 5, timeoutMs = 20000 
       signalSummary: 'Website inspection failed',
       evidence,
       opportunities,
+      contactEmail,
       error: err.message,
     };
   } finally {

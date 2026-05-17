@@ -13,6 +13,7 @@ The Scout workflow is intentionally website-first and human-paced. SearchAPI is 
 - Public website inspection with Playwright
 - Same-domain checks for likely hiring/contact paths
 - robots.txt checks before visiting pages
+- Single business notification email for 80%+ fit with discovered contact email
 - Live run updates over Server-Sent Events
 - Postgres persistence for runs, businesses, inspections, opportunities, and matches
 - Cached website inspections with a configurable TTL
@@ -27,13 +28,14 @@ Hire Near does not:
 
 - submit forms
 - apply to jobs
-- send email
 - solve CAPTCHAs
 - access content behind authentication
 - crawl off-domain pages
 - store raw HTML or full page text
 
 Website text is used transiently for classification. Persisted evidence is limited to signal labels, classifications, and URLs.
+
+Hirenear sends a single notification email to businesses where a candidate scores 80% fit or above, if a contact email was found on their public website. No email is sent more than once per business per scout run.
 
 ## User Disclosure
 

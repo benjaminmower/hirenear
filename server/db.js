@@ -117,6 +117,8 @@ async function runMigrations() {
 
   await pool.query(`
     ALTER TABLE scout_businesses
+      ADD COLUMN IF NOT EXISTS contact_email TEXT,
+      ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ,
       ADD COLUMN IF NOT EXISTS discovery_source TEXT,
       ADD COLUMN IF NOT EXISTS discovery_query TEXT,
       ADD COLUMN IF NOT EXISTS discovery_score INTEGER;

@@ -28,7 +28,8 @@ The founder's origin story: laid off from Paramount in 2024, manually walked Goo
 - Resume input = paste text only (no PDF upload)
 - Website inspection = rules-based browser checks (no LLM browsing)
 - LLM = resume-fit ranking only
-- No email, no form submission, no apply actions
+- No form submission, no apply actions
+- Hirenear sends a single notification email to businesses where a candidate scores 80% fit or above, if a contact email was found on their public website. No email is sent more than once per business per scout run.
 - SearchAPI = fallback/supplement when website evidence is weak
 - Report persists in Postgres; inspection results cached by domain with 48h TTL
 - User-paced: Playwright only fires when user clicks Visit

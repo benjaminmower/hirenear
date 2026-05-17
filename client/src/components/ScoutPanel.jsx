@@ -634,8 +634,8 @@ export default function ScoutPanel({
                   </div>
                   {matchSignals.length > 0 && (
                     <div style={styles.matchSignals}>
-                      {matchSignals.map((signalItem, index) => (
-                        <div key={`${signalItem.label}-${index}`} style={{ ...styles.matchSignalItem, ...matchSignalStyle(signalItem.weight) }}>
+                      {matchSignals.map(signalItem => (
+                        <div key={`${signalItem.weight}:${signalItem.label}`} style={{ ...styles.matchSignalItem, ...matchSignalStyle(signalItem.weight) }}>
                           {matchSignalPrefix(signalItem.weight)} {signalItem.label}
                         </div>
                       ))}

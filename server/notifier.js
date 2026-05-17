@@ -5,6 +5,10 @@ const SUBJECT = "Someone qualified is asking if you're hiring";
 let transporter = null;
 let transporterInitialized = false;
 
+function readFitScore(source) {
+  return Number(source?.fitScore ?? source?.fit_score ?? 0);
+}
+
 function getTransporter() {
   if (transporterInitialized) return transporter;
   transporterInitialized = true;
@@ -65,7 +69,7 @@ export async function notifyBusinessIfQualified(business) {
     const businessId = business?.id;
     if (!businessId) return;
 
-    const fitScore = Number(business.fitScore ?? business.fit_score ?? 0);
+    const fitScore = readFitScore(business);
     if (!Number.isFinite(fitScore) || fitScore < 80) return;
 
     const contactEmail = business.contactEmail || business.contact_email;
@@ -77,7 +81,7 @@ export async function notifyBusinessIfQualified(business) {
     );
     const row = existing.rows[0];
     if (!row || row.notified_at) return;
-    if (row.fit_score === null || row.fit_score === undefined || Number(row.fit_score) < 80) return;
+    if (row.fit_score === null || row.fit_score === undefined || readFitScore(row) < 80) return;
     if (!row.contact_email) return;
 
     const from = process.env.NOTIFY_FROM_EMAIL;

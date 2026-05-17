@@ -55,7 +55,7 @@ export async function notifyBusinessIfQualified(business) {
     );
     const row = existing.rows[0];
     if (!row || row.notified_at) return;
-    if (row.fit_score == null || Number(row.fit_score) < 80) return;
+    if (row.fit_score === null || row.fit_score === undefined || Number(row.fit_score) < 80) return;
     if (!row.contact_email) return;
 
     const from = process.env.NOTIFY_FROM_EMAIL;

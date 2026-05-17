@@ -346,8 +346,13 @@ async function applyBatchMatches(run, businesses, opportunities) {
     );
 
     const updatedBusiness = await query('SELECT * FROM scout_businesses WHERE id = $1', [match.businessId]);
-    notifyBusinessIfQualified(updatedBusiness.rows[0]);
-    emitRun(run.id, 'business_update', { business: businessRowToClient(updatedBusiness.rows[0]) });
+    const updatedBusinessRow = updatedBusiness.rows[0];
+    if (!updatedBusinessRow) {
+      console.warn(`[applyBatchMatches] missing business row for id ${match.businessId}`);
+      continue;
+    }
+    notifyBusinessIfQualified(updatedBusinessRow);
+    emitRun(run.id, 'business_update', { business: businessRowToClient(updatedBusinessRow) });
     emitRun(run.id, 'match_update', { match: matchRowToClient(row) });
   }
 

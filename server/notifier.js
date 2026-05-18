@@ -1,48 +1,31 @@
-import nodemailer from 'nodemailer';
+import { Resend } from 'resend';
 import { query } from './db.js';
 import { logError, logInfo, logWarn } from './logger.js';
 
 const QUALIFIED_SUBJECT = "Someone qualified is asking if you're hiring";
 
-let transporter = null;
-let transporterKey = '';
+let resendClient = null;
 
 function getBaseUrl() {
   return (process.env.BASE_URL || 'http://localhost:5173').replace(/\/+$/, '');
 }
 
-function getSmtpConfig() {
-  const host = process.env.SMTP_HOST;
-  const port = Number(process.env.SMTP_PORT || 587);
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
+function getResendConfig() {
+  const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.NOTIFY_FROM_EMAIL;
 
-  if (!host || !port || !user || !pass || !from) {
+  if (!apiKey || !from) {
     return null;
   }
 
-  return {
-    host,
-    port,
-    secure: port === 465,
-    auth: { user, pass },
-    from,
-  };
+  return { apiKey, from };
 }
 
-function getTransporter(config) {
-  const key = `${config.host}:${config.port}:${config.auth.user}`;
-  if (!transporter || key !== transporterKey) {
-    transporter = nodemailer.createTransport({
-      host: config.host,
-      port: config.port,
-      secure: config.secure,
-      auth: config.auth,
-    });
-    transporterKey = key;
+function getResend(config) {
+  if (!resendClient) {
+    resendClient = new Resend(config.apiKey);
   }
-  return transporter;
+  return resendClient;
 }
 
 function readFitScore(source) {
@@ -88,10 +71,10 @@ ${getBaseUrl()}/for-businesses
 }
 
 export async function sendBusinessNotifications(runId) {
-  const smtpConfig = getSmtpConfig();
-  if (!smtpConfig) {
-    logWarn('interest_notifications_skipped', { runId, reason: 'smtp_not_configured' });
-    return { configured: false, attempted: 0, sent: 0, seekerFollowupsSent: 0, failed: 0, reason: 'smtp_not_configured' };
+  const resendConfig = getResendConfig();
+  if (!resendConfig) {
+    logWarn('interest_notifications_skipped', { runId, reason: 'resend_not_configured' });
+    return { configured: false, attempted: 0, sent: 0, seekerFollowupsSent: 0, failed: 0, reason: 'resend_not_configured' };
   }
 
   const result = await query(
@@ -109,7 +92,7 @@ export async function sendBusinessNotifications(runId) {
     return { configured: true, attempted: 0, sent: 0, seekerFollowupsSent: 0, failed: 0 };
   }
 
-  const smtp = getTransporter(smtpConfig);
+  const resend = getResend(resendConfig);
   logInfo('interest_notifications_started', { runId, count: result.rowCount });
   const summary = {
     configured: true,
@@ -124,10 +107,10 @@ export async function sendBusinessNotifications(runId) {
     const confirmUrl = `${matchUrl}/confirm`;
 
     try {
-      await smtp.sendMail({
-        from: smtpConfig.from,
+      await resend.emails.send({
+        from: resendConfig.from,
         to: row.business_contact_email,
-        replyTo: row.seeker_email,
+        replyTo: 'benjaminmower@gmail.com',
         subject: QUALIFIED_SUBJECT,
         text: buildBusinessLeadBody(row.business_name, row.fit_score, matchUrl),
       });
@@ -147,9 +130,10 @@ export async function sendBusinessNotifications(runId) {
       summary.sent += 1;
 
       try {
-        await smtp.sendMail({
-          from: smtpConfig.from,
+        await resend.emails.send({
+          from: resendConfig.from,
           to: row.seeker_email,
+          replyTo: 'benjaminmower@gmail.com',
           subject: 'A business may reach out to you soon',
           text: `Hi,
 
@@ -212,9 +196,9 @@ export async function notifyBusinessIfQualified(business) {
       return;
     }
 
-    const smtpConfig = getSmtpConfig();
-    if (!smtpConfig) {
-      logWarn('qualified_business_notification_skipped', { businessId, reason: 'smtp_not_configured' });
+    const resendConfig = getResendConfig();
+    if (!resendConfig) {
+      logWarn('qualified_business_notification_skipped', { businessId, reason: 'resend_not_configured' });
       return;
     }
 
@@ -227,9 +211,11 @@ export async function notifyBusinessIfQualified(business) {
     const hasSummary = typeof row.match_summary === 'string' && row.match_summary.trim();
     const matchUrl = `${getBaseUrl()}/for-businesses`;
 
-    await getTransporter(smtpConfig).sendMail({
-      from: smtpConfig.from,
+    const resend = getResend(resendConfig);
+    await resend.emails.send({
+      from: resendConfig.from,
       to: row.contact_email,
+      replyTo: 'benjaminmower@gmail.com',
       subject: QUALIFIED_SUBJECT,
       text: hasSignals && hasSummary
         ? buildDetailedBusinessLeadBody(row.name, row.fit_score, row.match_summary.trim(), signals, matchUrl)

@@ -415,7 +415,6 @@ export async function inspectWebsite(website, { maxPages = 5, timeoutMs = PAGE_V
           continue;
         }
         const { title, text } = await readPageText(page, context, url, timeoutMs);
-        const { title, text } = await readPageText(page, context, url, timeoutMs);
         const mailtoLinks = await page.locator('a[href^="mailto:"]').evaluateAll(links =>
           links.map(link => link.getAttribute('href')).filter(Boolean)
         );

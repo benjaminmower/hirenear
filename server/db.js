@@ -19,6 +19,8 @@ export async function migrate() {
 
 async function runMigrations() {
   await pool.query(`
+    CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
     CREATE TABLE IF NOT EXISTS scout_runs (
       id TEXT PRIMARY KEY,
       resume_text TEXT NOT NULL,
@@ -114,8 +116,15 @@ async function runMigrations() {
       seeker_email TEXT NOT NULL,
       fit_score INTEGER NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      notified_at TIMESTAMPTZ
+      notified_at TIMESTAMPTZ,
+      match_token TEXT UNIQUE DEFAULT gen_random_uuid()::text,
+      opened_at TIMESTAMPTZ,
+      contacted_at TIMESTAMPTZ,
+      seeker_confirmed_at TIMESTAMPTZ
     );
+
+    CREATE INDEX IF NOT EXISTS idx_scout_interest_match_token
+      ON scout_interest(match_token);
   `);
 
   await pool.query(`
@@ -140,6 +149,21 @@ async function runMigrations() {
   await pool.query(`
     ALTER TABLE business_inspections
       ADD COLUMN IF NOT EXISTS contact_email TEXT;
+  `);
+
+  await pool.query(`
+    ALTER TABLE scout_interest
+      ADD COLUMN IF NOT EXISTS business_contact_email TEXT,
+      ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS match_token TEXT UNIQUE DEFAULT gen_random_uuid()::text,
+      ADD COLUMN IF NOT EXISTS opened_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS contacted_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS seeker_confirmed_at TIMESTAMPTZ;
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_scout_interest_match_token
+      ON scout_interest(match_token);
   `);
 
   await pool.query(`DELETE FROM scout_runs WHERE created_at < now() - interval '30 days'`);

@@ -27,7 +27,7 @@ const TARGET_LANES = [
 ];
 
 const SETUP_STEPS = ['area', 'resume', 'lanes', 'launch'];
-const INTEREST_THRESHOLD = 70;
+const INTEREST_THRESHOLD = 80;
 
 const STEP_META = {
   area: {
@@ -126,6 +126,13 @@ export default function ScoutPanel({
   const [interestSubmitting, setInterestSubmitting] = useState(false);
   const [interestSubmittedRunId, setInterestSubmittedRunId] = useState(null);
   const [interestError, setInterestError] = useState('');
+  const [profile, setProfile] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('hirenear:userProfile') || '{}');
+    } catch {
+      return {};
+    }
+  });
   const businesses = scout.businesses || [];
   const opportunities = scout.opportunities || [];
   const matches = scout.matches || [];
@@ -169,15 +176,15 @@ export default function ScoutPanel({
   }, [scout.run?.id]);
 
   useEffect(() => {
-    setInterestEmail('');
-    setInterestError('');
+    setInterestEmail(profile.email || '');
     setInterestSubmitting(false);
+    setInterestSubmittedRunId(null);
+    setInterestError('');
   }, [scout.run?.id]);
 
   const handleStart = () => {
     if (!searchPin) return;
     setInterestSubmittedRunId(null);
-    setInterestEmail('');
     setInterestError('');
     scout.startScout({
       resumeText,
@@ -219,6 +226,7 @@ export default function ScoutPanel({
 
     setInterestSubmitting(true);
     setInterestError('');
+
     try {
       const res = await fetch(`/api/scout-runs/${scout.run.id}/interest`, {
         method: 'POST',
@@ -231,13 +239,18 @@ export default function ScoutPanel({
 
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(data.error || 'Failed to submit interest');
+        throw new Error(data.error || 'Failed to notify businesses');
       }
 
       setInterestSubmittedRunId(scout.run.id);
-      setInterestEmail('');
+      setInterestEmail(seekerEmail);
+      setProfile(current => ({ ...current, email: seekerEmail }));
+      localStorage.setItem('hirenear:userProfile', JSON.stringify({
+        ...profile,
+        email: seekerEmail,
+      }));
     } catch (err) {
-      setInterestError(err.message || 'Failed to submit interest');
+      setInterestError(err.message || 'Failed to notify businesses');
     } finally {
       setInterestSubmitting(false);
     }
@@ -1090,6 +1103,28 @@ const styles = {
     color: '#182033',
     fontSize: 13,
     lineHeight: 1.6,
+  },
+  interestPanel: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 10,
+    padding: 16,
+    borderBottom: '1px solid #d9d3c9',
+    background: '#ffffff',
+  },
+  interestTitle: { fontSize: 13, fontWeight: 700, color: '#182033' },
+  interestList: { display: 'flex', flexDirection: 'column', gap: 6 },
+  interestItem: { display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12, color: '#4d5665' },
+  interestScore: { color: '#18794e', fontWeight: 700 },
+  interestLabel: { fontSize: 12, color: '#4d5665' },
+  interestError: { color: '#b42318', fontSize: 12 },
+  interestDone: {
+    padding: 14,
+    borderBottom: '1px solid #d9d3c9',
+    background: '#e5f4ec',
+    color: '#182033',
+    fontSize: 12,
+    lineHeight: 1.5,
   },
   list: { overflowY: 'auto', flex: 1, padding: '10px 12px 16px', background: '#f7f8f5' },
   empty: {

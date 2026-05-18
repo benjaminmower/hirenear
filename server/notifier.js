@@ -21,6 +21,10 @@ function getSmtpConfig() {
   };
 }
 
+function getBaseUrl() {
+  return (process.env.BASE_URL || 'http://localhost:5173').replace(/\/+$/, '');
+}
+
 let transporter = null;
 let transporterKey = '';
 
@@ -46,7 +50,7 @@ export async function sendBusinessNotifications(runId) {
   }
 
   const result = await query(
-    `SELECT id, business_name, business_contact_email, seeker_email, fit_score
+    `SELECT id, business_name, business_contact_email, seeker_email, fit_score, match_token
      FROM scout_interest
      WHERE run_id = $1
        AND notified_at IS NULL
@@ -58,8 +62,12 @@ export async function sendBusinessNotifications(runId) {
   if (result.rowCount === 0) return;
 
   const smtp = getTransporter(smtpConfig);
+  const baseUrl = getBaseUrl();
 
   for (const row of result.rows) {
+    const matchUrl = `${baseUrl}/match/${encodeURIComponent(row.match_token)}`;
+    const confirmUrl = `${matchUrl}/confirm`;
+
     try {
       await smtp.sendMail({
         from: smtpConfig.from,
@@ -70,7 +78,8 @@ export async function sendBusinessNotifications(runId) {
 
 Someone scouted your location on Hirenear and scored ${row.fit_score}% fit for your business. They're interested in hearing from you.
 
-Reply to this email to connect with them directly.
+View their match and reach out here:
+${matchUrl}
 
 — Hirenear`,
       });
@@ -81,6 +90,24 @@ Reply to this email to connect with them directly.
          WHERE id = $1`,
         [row.id]
       );
+
+      try {
+        await smtp.sendMail({
+          from: smtpConfig.from,
+          to: row.seeker_email,
+          subject: 'A business may reach out to you soon',
+          text: `Hi,
+
+You expressed interest in ${row.business_name} on Hirenear. We've let them know.
+
+If they reach out, did it go well? Let us know:
+${confirmUrl}
+
+— Hirenear`,
+        });
+      } catch (err) {
+        console.error(`[notifier] Failed to send seeker follow-up for scout_interest ${row.id}:`, err.message);
+      }
     } catch (err) {
       console.error(`[notifier] Failed to send notification for scout_interest ${row.id}:`, err.message);
     }

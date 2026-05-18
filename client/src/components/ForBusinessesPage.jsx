@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useMediaQuery } from '../hooks/useMediaQuery.js';
 
 const CONTACT_EMAIL = 'benjaminmower@gmail.com';
@@ -16,6 +17,20 @@ function Brand() {
 
 export default function ForBusinessesPage() {
   const isMobile = useMediaQuery('(max-width: 760px)');
+
+  useEffect(() => {
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousRootHeight = document.getElementById('root')?.style.height || '';
+
+    document.body.style.overflow = 'auto';
+    const root = document.getElementById('root');
+    if (root) root.style.height = 'auto';
+
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+      if (root) root.style.height = previousRootHeight;
+    };
+  }, []);
 
   return (
     <main style={styles.page}>

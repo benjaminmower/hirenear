@@ -499,8 +499,8 @@ export default function Map({
       const screenPoint = map.project([searchPin.lng, searchPin.lat]);
       const containerWidth = container.offsetWidth;
       const containerHeight = container.offsetHeight;
-      const cardWidth = 220;
-      const cardHeight = 80;
+      const cardWidth = isMobile ? 180 : 220;
+      const cardHeight = 75;
       const padding = 12;
 
       let x = screenPoint.x - cardWidth / 2;
@@ -535,22 +535,22 @@ export default function Map({
       {!searchPin && (
         <div style={{
           position: 'absolute',
-          bottom: isMobile ? 80 : 40,
+          bottom: isMobile ? 72 : 40,
           left: '50%',
           transform: 'translateX(-50%)',
           background: 'rgba(24, 32, 51, 0.88)',
           color: '#ffffff',
-          padding: '12px 16px',
+          padding: isMobile ? '10px 12px' : '12px 16px',
           borderRadius: 8,
-          fontSize: 14,
+          fontSize: isMobile ? 13 : 14,
           fontWeight: 600,
           fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
           backdropFilter: 'blur(4px)',
           border: '1px solid rgba(255, 255, 255, 0.1)',
           zIndex: 45,
           textAlign: 'center',
-          maxWidth: '90%',
-          whiteSpace: 'nowrap',
+          maxWidth: isMobile ? '85%' : '90%',
+          lineHeight: 1.3,
         }}>
           Drop a pin to select the area you want to look for work
         </div>
@@ -564,7 +564,7 @@ export default function Map({
           top: pinScreenPos.y,
           background: '#182033',
           color: '#ffffff',
-          padding: '12px 14px',
+          padding: isMobile ? '10px 12px' : '12px 14px',
           borderRadius: 8,
           boxShadow: '0 8px 24px rgba(24, 32, 51, 0.3)',
           zIndex: 45,
@@ -572,18 +572,18 @@ export default function Map({
           cursor: 'pointer',
           border: '1px solid rgba(255, 255, 255, 0.1)',
           transition: 'all 0.3s ease',
-          width: 220,
+          width: isMobile ? 180 : 220,
         }}>
           <div style={{
-            fontSize: 14,
+            fontSize: isMobile ? 13 : 14,
             fontWeight: 700,
-            marginBottom: 4,
+            marginBottom: 3,
             lineHeight: 1.2,
           }}>
             Scout this area
           </div>
           <div style={{
-            fontSize: 12,
+            fontSize: isMobile ? 11 : 12,
             fontWeight: 500,
             color: '#a8b2c1',
             lineHeight: 1.2,

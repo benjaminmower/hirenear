@@ -108,7 +108,7 @@ export async function sendBusinessSignupAlert(signup) {
       from: resendConfig.from,
       to: BUSINESS_SIGNUP_TO,
       replyTo: signup.email || resendConfig.replyTo,
-      subject: `New design partner signup: ${signup.businessName}`,
+      subject: `New business signup: ${signup.businessName}`,
       text: buildBusinessSignupBody(signup),
     });
     logInfo('business_signup_alert_sent', {

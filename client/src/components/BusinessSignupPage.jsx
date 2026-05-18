@@ -124,11 +124,11 @@ export default function BusinessSignupPage() {
       <form style={{ ...styles.card, ...(isMobile ? styles.cardMobile : {}) }} onSubmit={handleSubmit}>
         <Brand />
         <div>
-          <p style={styles.kicker}>Design partner signup</p>
+          <p style={styles.kicker}>Sign up your business</p>
           <h1 style={{ ...styles.title, ...(isMobile ? styles.titleMobile : {}) }}>
             Get qualified local candidates for $50/month.
           </h1>
-          <p style={styles.copy}>First 10 design partners get 3 months free.</p>
+          <p style={styles.copy}>First 10 businesses to sign up: 3 months free.</p>
         </div>
 
         <div style={styles.fieldGrid}>
@@ -229,7 +229,7 @@ export default function BusinessSignupPage() {
         {error && <div style={styles.error}>{error}</div>}
 
         <button type="submit" style={styles.button} disabled={submitting}>
-          {submitting ? 'Submitting...' : 'Become a design partner'}
+          {submitting ? 'Submitting...' : 'Try Hire Near free for 3 months'}
         </button>
       </form>
     </main>

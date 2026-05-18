@@ -51,7 +51,7 @@ export default function ForBusinessesPage() {
           </p>
           <div style={styles.actions}>
             <a href="/for-businesses/signup" style={styles.primaryButton}>
-              Become a design partner
+              Try Hire Near free for 3 months
             </a>
             <a href={`mailto:${CONTACT_EMAIL}?subject=Hire Near for my business`} style={styles.secondaryButton}>
               Talk to us
@@ -106,9 +106,9 @@ export default function ForBusinessesPage() {
       <section style={{ ...styles.pricingBand, ...(isMobile ? styles.pricingBandMobile : {}) }}>
         <div>
           <div style={styles.price}>$50/month</div>
-          <p style={styles.priceText}>Flat. Cancel anytime. First 10 design partners get 3 months free.</p>
+          <p style={styles.priceText}>Flat. Cancel anytime. First 10 businesses to sign up: 3 months free.</p>
         </div>
-        <a href="/for-businesses/signup" style={styles.primaryButton}>Become a design partner</a>
+        <a href="/for-businesses/signup" style={styles.primaryButton}>Try Hire Near free for 3 months</a>
       </section>
 
       <PublicFooter />

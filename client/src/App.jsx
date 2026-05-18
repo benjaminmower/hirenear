@@ -4,6 +4,7 @@ import PrivacyPage from './components/PrivacyPage.jsx';
 import SearchPanel from './components/SearchPanel.jsx';
 import { MatchConfirmPage, MatchPage } from './components/MatchPages.jsx';
 import ScoutPanel from './components/ScoutPanel.jsx';
+import TermsPage from './components/TermsPage.jsx';
 import { useMediaQuery } from './hooks/useMediaQuery.js';
 import { useScout } from './hooks/useScout.js';
 
@@ -54,6 +55,10 @@ export default function App() {
 
   if (normalizedPath === '/privacy') {
     return <PrivacyPage />;
+  }
+
+  if (normalizedPath === '/terms') {
+    return <TermsPage />;
   }
 
   const matchRoute = getMatchRoute(window.location.pathname);

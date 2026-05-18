@@ -7,6 +7,7 @@ export default function PublicFooter() {
         <div style={styles.brand}>Hire Near</div>
         <nav style={styles.links} aria-label="Footer">
           <a href="/for-businesses" style={styles.link}>For businesses</a>
+          <a href="/terms" style={styles.link}>Terms</a>
           <a href="/privacy" style={styles.link}>Privacy</a>
           <a href={`mailto:${CONTACT_EMAIL}`} style={styles.link}>{CONTACT_EMAIL}</a>
         </nav>

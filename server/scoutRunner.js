@@ -22,6 +22,10 @@ function emitRun(runId, type, payload) {
   emitterFor(runId).emit('event', { type, payload });
 }
 
+function emitStep(runId, step) {
+  emitRun(runId, 'inspection_step', { step });
+}
+
 function businessRowToClient(row) {
   return {
     id: row.id,
@@ -356,6 +360,7 @@ async function inspectBusiness({ run, business, cache }) {
   const cached = await getFreshInspection(cacheKey);
   if (cached) {
     logInfo('business_inspection_cache_hit', { runId: run.id, businessId: business.id, cacheKey });
+    emitStep(run.id, 'Loaded from cache');
     inspection = {
       status: cached.status,
       signalStrength: cached.signal_strength,
@@ -367,12 +372,15 @@ async function inspectBusiness({ run, business, cache }) {
     };
   } else {
     logInfo('business_inspection_cache_miss', { runId: run.id, businessId: business.id, cacheKey });
-    inspection = await inspectWebsite(business.website, { runId: run.id });
+    emitStep(run.id, 'Loading website...');
+    inspection = await inspectWebsite(business.website, { runId: run.id, emitStep: (step) => emitStep(run.id, step) });
+    emitStep(run.id, 'Scanning for hiring signals...');
     await saveInspection(cacheKey, business.place_id, business.website, inspection);
   }
 
   let opportunities = [...(inspection.opportunities || [])];
   if (inspection.signalStrength !== 'strong') {
+    emitStep(run.id, 'Searching for job listings...');
     const fallback = await searchFallbackOpportunities(business, cache, run);
     logInfo('business_fallback_search_completed', {
       runId: run.id,
@@ -386,6 +394,7 @@ async function inspectBusiness({ run, business, cache }) {
     }
   }
 
+  emitStep(run.id, 'Processing findings...');
   for (const opportunity of opportunities) {
     const row = await insertOpportunity(run.id, business.id, opportunity);
     emitRun(run.id, 'opportunity_found', { opportunity: opportunityRowToClient(row) });
@@ -407,6 +416,7 @@ async function inspectBusiness({ run, business, cache }) {
   );
 
   const updatedBusiness = await query('SELECT * FROM scout_businesses WHERE id = $1', [business.id]);
+  emitStep(run.id, 'Analyzing fit with resume...');
   logInfo('business_inspection_completed', {
     runId: run.id,
     businessId: business.id,

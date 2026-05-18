@@ -877,6 +877,105 @@ export default function ScoutPanel({
           </div>
         </div>
       )}
+
+      {/* Inspection step modal */}
+      {scout.currentInspectionBusiness && scout.inspectionSteps.length > 0 && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 105,
+        }}>
+          <div style={{
+            background: '#ffffff',
+            borderRadius: 12,
+            padding: '24px',
+            maxWidth: '400px',
+            width: '90%',
+            maxHeight: '70vh',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 16,
+          }}>
+            <div>
+              <h3 style={{
+                fontSize: 16,
+                fontWeight: 700,
+                color: '#182033',
+                margin: '0 0 8px 0',
+              }}>
+                Inspecting
+              </h3>
+              <p style={{
+                fontSize: 14,
+                color: '#4d5665',
+                margin: 0,
+                lineHeight: 1.4,
+              }}>
+                {scout.currentInspectionBusiness.name}
+              </p>
+            </div>
+
+            <div style={{
+              flex: 1,
+              overflowY: 'auto',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 8,
+              maxHeight: '200px',
+            }}>
+              {scout.inspectionSteps.map((step, idx) => (
+                <div
+                  key={idx}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: 8,
+                    fontSize: 13,
+                    color: '#4d5665',
+                  }}
+                >
+                  <span style={{
+                    color: '#36d399',
+                    fontWeight: 700,
+                    marginTop: 2,
+                  }}>✓</span>
+                  <span>{step}</span>
+                </div>
+              ))}
+              {/* Pulsing indicator for current step */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  fontSize: 13,
+                  color: '#8b8173',
+                }}
+              >
+                <span style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: '50%',
+                  background: '#b56d2a',
+                  animation: 'pulse 1.5s ease-in-out infinite',
+                }} />
+                <span>Working...</span>
+              </div>
+            </div>
+
+            <style>{`
+              @keyframes pulse {
+                0%, 100% { opacity: 1; transform: scale(1); }
+                50% { opacity: 0.5; transform: scale(0.8); }
+              }
+            `}</style>
+          </div>
+        </div>
+      )}
       </div>
     </div>
   );

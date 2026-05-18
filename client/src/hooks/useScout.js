@@ -18,6 +18,8 @@ export function useScout() {
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [inspectionSteps, setInspectionSteps] = useState([]);
+  const [currentInspectionBusiness, setCurrentInspectionBusiness] = useState(null);
   const eventSourceRef = useRef(null);
 
   const closeEvents = useCallback(() => {
@@ -53,6 +55,19 @@ export function useScout() {
     source.addEventListener('business_update', event => {
       const { business } = JSON.parse(event.data);
       setBusinesses(items => upsertById(items, business));
+
+      // Track which business is being inspected
+      if (business.inspectionStatus === 'checking') {
+        setCurrentInspectionBusiness(business);
+        setInspectionSteps([]);
+      } else {
+        setCurrentInspectionBusiness(null);
+      }
+    });
+
+    source.addEventListener('inspection_step', event => {
+      const { step } = JSON.parse(event.data);
+      setInspectionSteps(items => [...items, step]);
     });
 
     source.addEventListener('opportunity_found', event => {
@@ -164,6 +179,8 @@ export function useScout() {
     summary,
     loading,
     error,
+    inspectionSteps,
+    currentInspectionBusiness,
     startScout,
     loadRun,
     deleteRun,

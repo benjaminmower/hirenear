@@ -363,7 +363,7 @@ function firstMailtoEmail(hrefs) {
   return null;
 }
 
-export async function inspectWebsite(website, { maxPages = 5, timeoutMs = PAGE_VISIT_TIMEOUT_MS, runId } = {}) {
+export async function inspectWebsite(website, { maxPages = 5, timeoutMs = PAGE_VISIT_TIMEOUT_MS, runId, emitStep } = {}) {
   const domain = normalizeDomain(website);
   if (!website || !domain) {
     logWarn('website_inspection_rejected', { runId, reason: 'missing_or_invalid_website' });
@@ -379,7 +379,9 @@ export async function inspectWebsite(website, { maxPages = 5, timeoutMs = PAGE_V
 
   const start = Date.now();
   logInfo('website_inspection_started', { runId, domain, maxPages, timeoutMs });
+  emitStep?.('Launching browser...');
   const browser = await chromium.launch({ headless: true });
+  emitStep?.('Connecting to website...');
   const context = await browser.newContext({ userAgent: USER_AGENT });
   const unregisterContext = registerInspectionContext(runId, context);
   await context.route('**/*', async route => {
@@ -407,6 +409,7 @@ export async function inspectWebsite(website, { maxPages = 5, timeoutMs = PAGE_V
 
   try {
     await assertSafeHttpUrl(baseUrl);
+    emitStep?.('Scanning pages...');
 
     while (queue.length > 0 && seen.size < maxPages && Date.now() - start < overallTimeoutMs) {
       const url = queue.shift();

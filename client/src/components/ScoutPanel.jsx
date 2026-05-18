@@ -141,6 +141,7 @@ export default function ScoutPanel({
   onRadiusChange,
   onSelectBusiness,
   selectedBusiness,
+  onClose,
 }) {
   const [resumeText, setResumeText] = useState(scout.run?.resumeText || '');
   const [targetLanes, setTargetLanes] = useState(scout.run?.targetLanes || []);
@@ -340,40 +341,44 @@ export default function ScoutPanel({
     const stepMeta = STEP_META[setupStep];
 
     return (
-      <div style={styles.setupContainer}>
-        <div style={styles.recruiterMark}>
-          <span style={styles.recruiterRule} />
-          <span>hirenear.app</span>
-        </div>
-        <div style={styles.setupHeader}>
-          <div>
-            <div style={styles.eyebrow}>{stepMeta.eyebrow}</div>
-            <div style={styles.setupTitle}>{stepMeta.title}</div>
-          </div>
-          <div style={styles.stepCounter}>{currentStepIndex + 1} / {SETUP_STEPS.length}</div>
-        </div>
-        <div style={styles.stageCopy}>{stepMeta.copy}</div>
-
-        <div style={styles.progressTrack}>
-          {SETUP_STEPS.map((step, index) => (
+      <div style={styles.setupOverlay} role="dialog" aria-modal="true" aria-label="Scout setup">
+        <div style={styles.setupShell}>
+          <div style={styles.setupHeader2}>
+            <div>
+              <div style={styles.eyebrow}>{stepMeta.eyebrow}</div>
+              <div style={styles.setupTitle}>{stepMeta.title}</div>
+            </div>
             <button
-              key={step}
               type="button"
-              style={{
-                ...styles.progressStep,
-                ...(index <= currentStepIndex ? styles.progressStepActive : {}),
-              }}
-              onClick={() => setSetupStep(step)}
+              style={styles.setupCloseButton}
+              onClick={onClose}
             >
-              {step === 'area' && 'Area'}
-              {step === 'resume' && 'Resume'}
-              {step === 'lanes' && 'Lanes'}
-              {step === 'launch' && 'Launch'}
+              ✕
             </button>
-          ))}
-        </div>
+          </div>
 
-        <div style={styles.setupStage}>
+          <div style={styles.stageCopy}>{stepMeta.copy}</div>
+
+          <div style={styles.progressTrack}>
+            {SETUP_STEPS.map((step, index) => (
+              <button
+                key={step}
+                type="button"
+                style={{
+                  ...styles.progressStep,
+                  ...(index <= currentStepIndex ? styles.progressStepActive : {}),
+                }}
+                onClick={() => setSetupStep(step)}
+              >
+                {step === 'area' && 'Area'}
+                {step === 'resume' && 'Resume'}
+                {step === 'lanes' && 'Lanes'}
+                {step === 'launch' && 'Launch'}
+              </button>
+            ))}
+          </div>
+
+          <div style={styles.setupStage}>
           {setupStep === 'area' && (
             <>
               <div style={styles.pinReadout}>
@@ -462,56 +467,69 @@ export default function ScoutPanel({
           )}
         </div>
 
-        {scout.error && <div style={styles.error}>{scout.error}</div>}
+          {scout.error && <div style={styles.error}>{scout.error}</div>}
 
-        <div style={styles.setupActions}>
-          <button
-            type="button"
-            style={styles.backButton}
-            onClick={goBack}
-            disabled={setupStep === 'area'}
-          >
-            Back
-          </button>
-          {setupStep === 'launch' ? (
+          <div style={styles.setupActions}>
             <button
               type="button"
-              style={styles.primarySetupButton}
-              disabled={!canStart}
-              onClick={handleStart}
+              style={styles.backButton}
+              onClick={goBack}
+              disabled={setupStep === 'area'}
             >
-              Scout this area
+              Back
             </button>
-          ) : (
-            <button
-              type="button"
-              style={styles.primarySetupButton}
-              disabled={
-                (setupStep === 'area' && !searchPin) ||
-                (setupStep === 'resume' && !resumeReady) ||
-                (setupStep === 'lanes' && !lanesReady)
-              }
-              onClick={goNext}
-            >
-              Continue
-            </button>
-          )}
+            {setupStep === 'launch' ? (
+              <button
+                type="button"
+                style={styles.primarySetupButton}
+                disabled={!canStart}
+                onClick={handleStart}
+              >
+                Scout this area
+              </button>
+            ) : (
+              <button
+                type="button"
+                style={styles.primarySetupButton}
+                disabled={
+                  (setupStep === 'area' && !searchPin) ||
+                  (setupStep === 'resume' && !resumeReady) ||
+                  (setupStep === 'lanes' && !lanesReady)
+                }
+                onClick={goNext}
+              >
+                Continue
+              </button>
+            )}
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div style={styles.container}>
-      {/* Setup controls */}
-      <div style={styles.controls}>
-        <div style={styles.runHeader}>
+    <div style={styles.scoutOverlay} role="dialog" aria-modal="true" aria-label="Scout run">
+      <div style={styles.scoutShell}>
+        {/* Scout header with close button */}
+        <div style={styles.scoutHeader}>
           <div>
             <div style={styles.eyebrow}>Scout run</div>
             <div style={styles.runTitle}>{stage}</div>
           </div>
-          <div style={styles.runPill}>{searchPin ? `${radius / 1000}km` : 'No pin'}</div>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            <div style={styles.runPill}>{searchPin ? `${radius / 1000}km` : 'No pin'}</div>
+            <button
+              type="button"
+              style={styles.scoutCloseButton}
+              onClick={onClose}
+            >
+              ✕
+            </button>
+          </div>
         </div>
+
+        {/* Setup controls */}
+        <div style={styles.controls}>
         <div style={styles.stepRow}>
           <span style={{ ...styles.step, ...(searchPin ? styles.stepDone : {}) }}>Pin</span>
           <span style={{ ...styles.step, ...(resumeText.trim().length >= 40 ? styles.stepDone : {}) }}>Resume</span>
@@ -843,6 +861,7 @@ export default function ScoutPanel({
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }
@@ -863,6 +882,83 @@ function OpportunityLink({ opportunity, match, fallbackUrl }) {
 }
 
 const styles = {
+  setupOverlay: {
+    position: 'fixed',
+    inset: 0,
+    zIndex: 100,
+    background: 'rgba(24, 32, 51, 0.72)',
+    padding: 24,
+    overflow: 'auto',
+  },
+  setupShell: {
+    maxWidth: 720,
+    margin: '0 auto',
+    background: '#f7f8f5',
+    borderRadius: 8,
+    color: '#182033',
+    padding: 26,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 18,
+    minHeight: 'calc(100dvh - 48px)',
+  },
+  setupHeader2: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 16,
+  },
+  setupCloseButton: {
+    background: '#ffffff',
+    border: '1px solid #d9d3c9',
+    borderRadius: 4,
+    color: '#6f5f4c',
+    padding: '10px 12px',
+    font: 'inherit',
+    fontSize: 16,
+    fontWeight: 400,
+    cursor: 'pointer',
+    flexShrink: 0,
+  },
+  scoutOverlay: {
+    position: 'fixed',
+    inset: 0,
+    zIndex: 100,
+    background: 'rgba(24, 32, 51, 0.72)',
+    padding: 24,
+    overflow: 'auto',
+  },
+  scoutShell: {
+    maxWidth: 820,
+    margin: '0 auto',
+    background: '#f7f8f5',
+    borderRadius: 8,
+    color: '#182033',
+    padding: 26,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 12,
+    minHeight: 'calc(100dvh - 48px)',
+  },
+  scoutHeader: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 16,
+    marginBottom: 12,
+  },
+  scoutCloseButton: {
+    background: '#ffffff',
+    border: '1px solid #d9d3c9',
+    borderRadius: 4,
+    color: '#6f5f4c',
+    padding: '10px 12px',
+    font: 'inherit',
+    fontSize: 16,
+    fontWeight: 400,
+    cursor: 'pointer',
+    flexShrink: 0,
+  },
   container: {
     display: 'flex',
     flexDirection: 'column',

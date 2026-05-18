@@ -39,6 +39,7 @@ function ScoutApp() {
   const [geoRadius, setGeoRadius] = useState(1000);
   const scout = useScout();
   const [searchPin, setSearchPin] = useState(null);
+  const [scoutOpen, setScoutOpen] = useState(scout.run?.id || false);
 
   const handlePinDrop = (lat, lng) => {
     setSelectedJob(null);
@@ -55,7 +56,6 @@ function ScoutApp() {
     strongCount: scout.businesses.filter(business => business.signalStrength === 'strong').length,
     status: scout.run?.status,
   };
-  const showScoutSetup = !scout.run?.id && !scout.loading;
 
   return (
     <div style={styles.app}>
@@ -76,18 +76,6 @@ function ScoutApp() {
 
       {/* Body */}
       <div style={styles.body}>
-        {/* Sidebar */}
-        <aside style={{ ...styles.sidebar, ...(showScoutSetup ? styles.setupSidebar : {}) }}>
-          <ScoutPanel
-            scout={scout}
-            searchPin={searchPin}
-            radius={geoRadius}
-            onRadiusChange={setGeoRadius}
-            selectedBusiness={selectedBusiness}
-            onSelectBusiness={setSelectedBusiness}
-          />
-        </aside>
-
         {/* Map */}
         <main style={styles.mapContainer}>
           <Suspense fallback={<div style={styles.mapFallback}>Loading map...</div>}>
@@ -104,8 +92,29 @@ function ScoutApp() {
               onPinDrop={handlePinDrop}
             />
           </Suspense>
+
+          {/* Scout trigger button */}
+          <button
+            style={styles.scoutTrigger}
+            onClick={() => setScoutOpen(true)}
+          >
+            {scout.run?.id ? 'View scout run' : 'Scout this area'}
+          </button>
         </main>
       </div>
+
+      {/* Scout modal */}
+      {scoutOpen && (
+        <ScoutPanel
+          scout={scout}
+          searchPin={searchPin}
+          radius={geoRadius}
+          onRadiusChange={setGeoRadius}
+          selectedBusiness={selectedBusiness}
+          onSelectBusiness={setSelectedBusiness}
+          onClose={() => setScoutOpen(false)}
+        />
+      )}
 
       <style>{`
         @keyframes spin { to { transform: rotate(360deg); } }
@@ -179,21 +188,25 @@ const styles = {
     flex: 1,
     overflow: 'hidden',
   },
-  sidebar: {
-    width: 'var(--panel-width)',
-    background: '#f7f8f5',
-    borderRight: '1px solid #d9d3c9',
-    display: 'flex',
-    flexDirection: 'column',
-    overflow: 'hidden',
-    flexShrink: 0,
-  },
-  setupSidebar: {
-    width: 'min(560px, 44vw)',
-  },
   mapContainer: {
     flex: 1,
     position: 'relative',
+  },
+  scoutTrigger: {
+    position: 'fixed',
+    bottom: 24,
+    left: 24,
+    zIndex: 50,
+    background: '#182033',
+    color: '#ffffff',
+    border: 'none',
+    borderRadius: 8,
+    padding: '12px 16px',
+    fontSize: 14,
+    fontWeight: 700,
+    cursor: 'pointer',
+    boxShadow: '0 8px 24px rgba(24, 32, 51, 0.2)',
+    fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   },
   mapFallback: {
     width: '100%',

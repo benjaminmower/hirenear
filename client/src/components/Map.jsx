@@ -531,31 +531,6 @@ export default function Map({
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
 
-      {/* Pre-pin instruction overlay */}
-      {!searchPin && (
-        <div style={{
-          position: 'absolute',
-          bottom: isMobile ? 72 : 40,
-          left: '50%',
-          transform: 'translateX(-50%)',
-          background: 'rgba(24, 32, 51, 0.88)',
-          color: '#ffffff',
-          padding: isMobile ? '10px 12px' : '12px 16px',
-          borderRadius: 8,
-          fontSize: isMobile ? 13 : 14,
-          fontWeight: 600,
-          fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-          backdropFilter: 'blur(4px)',
-          border: '1px solid rgba(255, 255, 255, 0.1)',
-          zIndex: 45,
-          textAlign: 'center',
-          maxWidth: isMobile ? '85%' : '90%',
-          lineHeight: 1.3,
-        }}>
-          Drop a pin to select the area you want to look for work
-        </div>
-      )}
-
       {/* Anchored CTA near dropped pin */}
       {searchPin && pinScreenPos && (
         <div style={{

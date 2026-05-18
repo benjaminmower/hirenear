@@ -13,12 +13,13 @@ function getBaseUrl() {
 function getResendConfig() {
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.NOTIFY_FROM_EMAIL;
+  const replyTo = process.env.REPLY_TO_EMAIL || 'hello@hirenear.app';
 
   if (!apiKey || !from) {
     return null;
   }
 
-  return { apiKey, from };
+  return { apiKey, from, replyTo };
 }
 
 function getResend(config) {
@@ -110,7 +111,7 @@ export async function sendBusinessNotifications(runId) {
       await resend.emails.send({
         from: resendConfig.from,
         to: row.business_contact_email,
-        replyTo: 'benjaminmower@gmail.com',
+        replyTo: resendConfig.replyTo,
         subject: QUALIFIED_SUBJECT,
         text: buildBusinessLeadBody(row.business_name, row.fit_score, matchUrl),
       });
@@ -133,7 +134,7 @@ export async function sendBusinessNotifications(runId) {
         await resend.emails.send({
           from: resendConfig.from,
           to: row.seeker_email,
-          replyTo: 'benjaminmower@gmail.com',
+          replyTo: resendConfig.replyTo,
           subject: 'A business may reach out to you soon',
           text: `Hi,
 
@@ -215,7 +216,7 @@ export async function notifyBusinessIfQualified(business) {
     await resend.emails.send({
       from: resendConfig.from,
       to: row.contact_email,
-      replyTo: 'benjaminmower@gmail.com',
+      replyTo: resendConfig.replyTo,
       subject: QUALIFIED_SUBJECT,
       text: hasSignals && hasSummary
         ? buildDetailedBusinessLeadBody(row.name, row.fit_score, row.match_summary.trim(), signals, matchUrl)

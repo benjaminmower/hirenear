@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { useMediaQuery } from '../hooks/useMediaQuery.js';
 
-const CONTACT_EMAIL = 'benjaminmower@gmail.com';
+const CONTACT_EMAIL = 'hello@hirenear.app';
 
 function Brand() {
   return (

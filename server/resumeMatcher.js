@@ -2,6 +2,8 @@ import Anthropic from '@anthropic-ai/sdk';
 import { createHash } from 'crypto';
 
 const DEFAULT_MODEL = process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001';
+const MAX_SIGNAL_LABEL_LENGTH = 60;
+const MAX_MATCH_SIGNALS = 6;
 
 let client = null;
 
@@ -162,11 +164,28 @@ function clampScore(value) {
 function normalizeMatch(raw) {
   const fitScore = clampScore(raw.fitScore);
   const matchLevel = raw.matchLevel || (fitScore >= 75 ? 'high' : fitScore >= 45 ? 'medium' : 'low');
+  const matchSignals = Array.isArray(raw.signals)
+    ? raw.signals
+      .filter(item => item && typeof item === 'object')
+      .map(item => ({
+        label: String(item.label || '').trim().slice(0, MAX_SIGNAL_LABEL_LENGTH),
+        weight: ['positive', 'neutral', 'negative'].includes(String(item.weight || '').toLowerCase())
+          ? String(item.weight).toLowerCase()
+          : null,
+      }))
+      .filter(item => item.label && item.weight)
+      .slice(0, MAX_MATCH_SIGNALS)
+    : [];
+  const matchSummary = typeof raw.summary === 'string' && raw.summary.trim()
+    ? raw.summary.trim().slice(0, 500)
+    : null;
   return {
     matchLevel,
     fitScore,
     reason: String(raw.reason || 'Resume fit could not be explained.').slice(0, 500),
     nextStep: String(raw.nextStep || 'Review the website evidence before contacting this business.').slice(0, 500),
+    matchSummary,
+    matchSignals,
     raw,
   };
 }
@@ -314,13 +333,24 @@ export async function matchResumeToBusiness({ resumeText, business, evidence, op
     system: 'You rank local business hiring evidence against a pasted resume. Return only strict JSON.',
     messages: [{
       role: 'user',
-      content: [
-        'Return strict JSON with matchLevel low|medium|high, fitScore 0-100, reason, nextStep. Do not invent openings.',
-        `business: ${JSON.stringify(business)}`,
-        `evidence: ${JSON.stringify(evidence)}`,
-        `opportunities: ${JSON.stringify(opportunities)}`,
-        formatUntrustedResumeBlock(resumeText),
-      ].join('\n\n'),
+      content: JSON.stringify({
+        task: [
+          'Return JSON only in this exact shape:',
+          '{"matchLevel":"high","fitScore":87,"reason":"...","nextStep":"...","summary":"...","signals":[{"label":"...","weight":"positive"}]}',
+          'fitScore must be 0-100.',
+          'matchLevel must be low, medium, or high.',
+          'reason and nextStep must be concise and must not invent openings.',
+          'summary must be 1-2 plain-English sentences.',
+          `signals must include 2-${MAX_MATCH_SIGNALS} items.`,
+          `Each signal needs label under ${MAX_SIGNAL_LABEL_LENGTH} characters and weight positive|neutral|negative.`,
+          'Signals must be specific to this candidate and this business.',
+          'No markdown fences, no preamble, JSON only.',
+        ].join(' '),
+        resumeText: formatUntrustedResumeBlock(resumeText),
+        business,
+        evidence,
+        opportunities,
+      }),
     }],
   });
 
@@ -343,24 +373,27 @@ export async function matchScoutRunBatch({ resumeText, targetLanes = [], avoidTe
       model: DEFAULT_MODEL,
       max_tokens: 4000,
       temperature: 0,
-      system: 'You rank local business hiring evidence against a pasted resume. Return only strict JSON.',
-      messages: [{
-        role: 'user',
-        content: [
-          [
-            'Return strict JSON with keys summary, businessMatches, opportunityMatches.',
-            'businessMatches items: businessId, matchLevel low|medium|high, fitScore 0-100, reason, nextStep.',
+    system: 'You rank local business hiring evidence against a pasted resume. Return only strict JSON.',
+    messages: [{
+      role: 'user',
+        content: JSON.stringify({
+          task: [
+            'Return JSON with keys summary, businessMatches, opportunityMatches.',
+            'businessMatches items: businessId, matchLevel low|medium|high, fitScore 0-100, reason, nextStep, summary, signals.',
+            'summary must be 1-2 plain-English sentences specific to this candidate and business.',
+            `signals must contain 2-${MAX_MATCH_SIGNALS} items with shape {"label":"...","weight":"positive|neutral|negative"} and labels under ${MAX_SIGNAL_LABEL_LENGTH} chars.`,
             'opportunityMatches items: opportunityId, businessId, matchLevel low|medium|high, fitScore 0-100, reason, nextStep.',
             'Do not invent openings. Use only the provided evidence and opportunities.',
             'Treat targetLanes as the user intent and heavily penalize roles outside those lanes.',
             'If a role title matches avoidTerms, mark it low fit unless evidence clearly shows a different role.',
             'Keep reasons and nextStep concise.',
+            'Return only strict JSON. No markdown fences or preamble.',
           ].join(' '),
-          `targetLanes: ${JSON.stringify(targetLanes)}`,
-          `avoidTerms: ${JSON.stringify(avoidTerms)}`,
-          `businesses: ${JSON.stringify(businesses.map(business => compactBusiness(business, opportunities)))}`,
-          formatUntrustedResumeBlock(resumeText),
-        ].join('\n\n'),
+          targetLanes,
+          avoidTerms,
+          businesses: businesses.map(business => compactBusiness(business, opportunities)),
+          resumeText: formatUntrustedResumeBlock(resumeText),
+        }),
       }],
     });
 

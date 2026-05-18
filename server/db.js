@@ -53,6 +53,8 @@ async function runMigrations() {
       signal_strength TEXT NOT NULL DEFAULT 'queued',
       signal_summary TEXT,
       fit_score INTEGER,
+      match_summary TEXT,
+      match_signals JSONB,
       fit_reason TEXT,
       next_step TEXT,
       discovery_source TEXT,
@@ -140,6 +142,10 @@ async function runMigrations() {
 
   await pool.query(`
     ALTER TABLE scout_businesses
+      ADD COLUMN IF NOT EXISTS contact_email TEXT,
+      ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS match_summary TEXT,
+      ADD COLUMN IF NOT EXISTS match_signals JSONB,
       ADD COLUMN IF NOT EXISTS discovery_source TEXT,
       ADD COLUMN IF NOT EXISTS discovery_query TEXT,
       ADD COLUMN IF NOT EXISTS discovery_score INTEGER,

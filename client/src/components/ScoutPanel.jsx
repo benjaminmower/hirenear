@@ -28,6 +28,7 @@ const TARGET_LANES = [
 
 const SETUP_STEPS = ['area', 'resume', 'lanes', 'launch'];
 const INTEREST_THRESHOLD = 80;
+const MAX_MATCH_SIGNALS = 6;
 
 const STEP_META = {
   area: {
@@ -72,6 +73,30 @@ function signalStyle(signal) {
     none: styles.badgeMuted,
     queued: styles.badgeMuted,
   }[signal] || styles.badgeMuted;
+}
+
+function matchSignalStyle(weight) {
+  return {
+    positive: styles.matchSignalPositive,
+    neutral: styles.matchSignalNeutral,
+    negative: styles.matchSignalNegative,
+  }[weight] || styles.matchSignalNeutral;
+}
+
+function matchSignalPrefix(weight) {
+  return {
+    positive: '✓',
+    neutral: '~',
+    negative: '✗',
+  }[weight] || '~';
+}
+
+function validMatchSignals(signals) {
+  if (!Array.isArray(signals)) return [];
+  return signals
+    .filter(item => item && typeof item.label === 'string' && item.label.trim())
+    .filter(item => ['positive', 'neutral', 'negative'].includes(item.weight))
+    .slice(0, MAX_MATCH_SIGNALS);
 }
 
 function bestBusinessLink(business, opportunities) {
@@ -649,6 +674,7 @@ export default function ScoutPanel({
         {decidedBusinesses.map(business => {
           const businessOpportunities = opportunities.filter(item => item.businessId === business.id);
           const primaryLink = bestBusinessLink(business, businessOpportunities);
+          const matchSignals = validMatchSignals(business.matchSignals);
           const selected = selectedBusiness?.id === business.id;
           const signal = business.inspectionStatus === 'checking' ? 'checking'
             : business.inspectionStatus === 'skipped' ? 'none'
@@ -667,10 +693,24 @@ export default function ScoutPanel({
               </div>
               <div style={styles.meta}>{business.vicinity}</div>
               {business.inspectionStatus !== 'skipped' && (
-                <div style={styles.scoreRow}>
-                  <span style={styles.score}>{business.fitScore ?? '--'}</span>
-                  <span style={styles.reason}>{business.fitReason || business.signalSummary || 'Inspecting...'}</span>
-                </div>
+                <>
+                  <div style={styles.scoreRow}>
+                    <span style={styles.score}>{business.fitScore ?? '--'}</span>
+                    <span style={styles.reason}>{business.fitReason || business.signalSummary || 'Inspecting...'}</span>
+                  </div>
+                  {matchSignals.length > 0 && (
+                    <div style={styles.matchSignals}>
+                      {matchSignals.map(signalItem => (
+                        <div key={`${signalItem.weight}:${signalItem.label}`} style={{ ...styles.matchSignalItem, ...matchSignalStyle(signalItem.weight) }}>
+                          {matchSignalPrefix(signalItem.weight)} {signalItem.label}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {matchSignals.length > 0 && business.matchSummary && (
+                    <div style={styles.matchSummary}>{business.matchSummary}</div>
+                  )}
+                </>
               )}
               {selected && business.inspectionStatus !== 'skipped' && (
                 <div style={styles.details}>
@@ -1160,6 +1200,12 @@ const styles = {
   scoreRow: { display: 'flex', gap: 8, alignItems: 'flex-start' },
   score: { width: 38, color: '#18794e', fontSize: 22, fontWeight: 800, lineHeight: 1 },
   reason: { flex: 1, color: '#4d5665', fontSize: 12, lineHeight: 1.45 },
+  matchSignals: { marginTop: 6, display: 'flex', flexDirection: 'column', gap: 3 },
+  matchSignalItem: { fontSize: 12, lineHeight: 1.35 },
+  matchSignalPositive: { color: '#18794e' },
+  matchSignalNeutral: { color: '#936d10' },
+  matchSignalNegative: { color: '#6f5f4c' },
+  matchSummary: { marginTop: 6, color: '#6f5f4c', fontSize: 11, lineHeight: 1.45, fontStyle: 'italic' },
   details: { marginTop: 12, paddingTop: 12, borderTop: '1px solid #ece5dc', display: 'flex', flexDirection: 'column', gap: 8 },
   link: { color: '#255e91', fontSize: 12, fontWeight: 800, textDecoration: 'none' },
   nextStep: { color: '#182033', fontSize: 12, lineHeight: 1.45 },

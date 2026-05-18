@@ -5,6 +5,7 @@ import { getErrorMessage } from './limits.js';
 import { query } from './db.js';
 import { closeRunInspectionSessions, inspectWebsite, normalizeDomain } from './websiteInspector.js';
 import { matchScoutRunBatch, extractResumeSignals } from './resumeMatcher.js';
+import { notifyBusinessIfQualified } from './notifier.js';
 
 const events = new Map();
 const CONCURRENCY = Number(process.env.SCOUT_INSPECTION_CONCURRENCY || 2);
@@ -35,11 +36,14 @@ function businessRowToClient(row) {
     signalStrength: row.signal_strength,
     signalSummary: row.signal_summary,
     fitScore: row.fit_score,
+    matchSummary: row.match_summary,
+    matchSignals: row.match_signals || [],
     fitReason: row.fit_reason,
     nextStep: row.next_step,
     discoverySource: row.discovery_source,
     discoveryQuery: row.discovery_query,
     discoveryScore: row.discovery_score,
+    contactEmail: row.contact_email,
     evidence: row.evidence || [],
   };
 }
@@ -373,13 +377,26 @@ async function applyBatchMatches(run, businesses, opportunities) {
 
     await query(
       `UPDATE scout_businesses
-       SET fit_score = $2, fit_reason = $3, next_step = $4, updated_at = now()
-       WHERE id = $1`,
-      [match.businessId, match.fitScore, match.reason, match.nextStep]
+       SET fit_score = $2, fit_reason = $3, next_step = $4, match_summary = $5, match_signals = $6, updated_at = now()
+        WHERE id = $1`,
+      [
+        match.businessId,
+        match.fitScore,
+        match.reason,
+        match.nextStep,
+        match.matchSummary || null,
+        JSON.stringify(match.matchSignals || []),
+      ]
     );
 
     const updatedBusiness = await query('SELECT * FROM scout_businesses WHERE id = $1', [match.businessId]);
-    emitRun(run.id, 'business_update', { business: businessRowToClient(updatedBusiness.rows[0]) });
+    const updatedBusinessRow = updatedBusiness.rows[0];
+    if (!updatedBusinessRow) {
+      console.warn(`[applyBatchMatches] missing business row for id ${match.businessId}`);
+      continue;
+    }
+    notifyBusinessIfQualified(updatedBusinessRow);
+    emitRun(run.id, 'business_update', { business: businessRowToClient(updatedBusinessRow) });
     emitRun(run.id, 'match_update', { match: matchRowToClient(row) });
   }
 

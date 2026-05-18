@@ -182,8 +182,8 @@ async function getFreshInspection(cacheKey) {
 async function saveInspection(cacheKey, placeId, website, inspection) {
   await query(
     `INSERT INTO business_inspections
-      (cache_key, place_id, domain, website, status, signal_strength, signal_summary, evidence, opportunities, error, inspected_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now())
+      (cache_key, place_id, domain, website, status, signal_strength, signal_summary, evidence, opportunities, contact_email, error, inspected_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,now())
      ON CONFLICT (cache_key) DO UPDATE SET
       place_id = EXCLUDED.place_id,
       domain = EXCLUDED.domain,
@@ -193,6 +193,7 @@ async function saveInspection(cacheKey, placeId, website, inspection) {
       signal_summary = EXCLUDED.signal_summary,
       evidence = EXCLUDED.evidence,
       opportunities = EXCLUDED.opportunities,
+      contact_email = EXCLUDED.contact_email,
       error = EXCLUDED.error,
       inspected_at = now()`,
     [
@@ -205,6 +206,7 @@ async function saveInspection(cacheKey, placeId, website, inspection) {
       inspection.signalSummary,
       JSON.stringify(inspection.evidence || []),
       JSON.stringify(inspection.opportunities || []),
+      inspection.contactEmail || null,
       inspection.error || null,
     ]
   );
@@ -310,6 +312,7 @@ async function inspectBusiness({ run, business, cache }) {
       signalSummary: cached.signal_summary,
       evidence: cached.evidence || [],
       opportunities: cached.opportunities || [],
+      contactEmail: cached.contact_email || null,
       error: cached.error,
     };
   } else {
@@ -335,7 +338,7 @@ async function inspectBusiness({ run, business, cache }) {
   await query(
     `UPDATE scout_businesses
      SET inspection_status = $2, signal_strength = $3, signal_summary = $4, evidence = $5,
-         updated_at = now()
+         contact_email = $6, updated_at = now()
      WHERE id = $1`,
     [
       business.id,
@@ -343,6 +346,7 @@ async function inspectBusiness({ run, business, cache }) {
       inspection.signalStrength,
       inspection.signalSummary,
       JSON.stringify(inspection.evidence || []),
+      inspection.contactEmail || null,
     ]
   );
 

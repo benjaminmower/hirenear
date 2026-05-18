@@ -29,6 +29,8 @@ const PAGE_VISIT_TIMEOUT_MS = 15000;
 const robotsCache = new Map();
 const hostLookupCache = new Map();
 const activeInspectionContexts = new Map();
+const EMAIL_PATTERN = /\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b/ig;
+const EMAIL_VALIDATION_PATTERN = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/;
 
 export function normalizeDomain(website) {
   try {
@@ -329,6 +331,36 @@ async function readPageText(page, context, url, timeoutMs) {
   }
 }
 
+function firstValidEmail(text) {
+  if (!text) return null;
+  const matches = text.match(EMAIL_PATTERN) || [];
+  for (const match of matches) {
+    const value = String(match || '').trim().toLowerCase();
+    if (!value) continue;
+    if (EMAIL_VALIDATION_PATTERN.test(value)) return value;
+  }
+  return null;
+}
+
+function firstMailtoEmail(hrefs) {
+  for (const href of hrefs || []) {
+    if (!href) continue;
+    try {
+      const parsed = new URL(href, 'https://placeholder.local');
+      if (parsed.protocol !== 'mailto:') continue;
+      const decoded = decodeURIComponent(parsed.pathname || '').trim();
+      const parts = decoded.split(',').map(item => item.trim()).filter(Boolean);
+      for (const part of parts) {
+        const value = part.toLowerCase();
+        if (EMAIL_VALIDATION_PATTERN.test(value)) return value;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
 export async function inspectWebsite(website, { maxPages = 5, timeoutMs = PAGE_VISIT_TIMEOUT_MS, runId } = {}) {
   const domain = normalizeDomain(website);
   if (!website || !domain) {
@@ -367,6 +399,7 @@ export async function inspectWebsite(website, { maxPages = 5, timeoutMs = PAGE_V
   const opportunities = [];
   let bestSignal = 'none';
   const overallTimeoutMs = timeoutMs * maxPages;
+  let contactEmail = null;
 
   try {
     await assertSafeHttpUrl(baseUrl);
@@ -382,6 +415,13 @@ export async function inspectWebsite(website, { maxPages = 5, timeoutMs = PAGE_V
           continue;
         }
         const { title, text } = await readPageText(page, context, url, timeoutMs);
+        const { title, text } = await readPageText(page, context, url, timeoutMs);
+        const mailtoLinks = await page.locator('a[href^="mailto:"]').evaluateAll(links =>
+          links.map(link => link.getAttribute('href')).filter(Boolean)
+        );
+        if (!contactEmail) {
+          contactEmail = firstMailtoEmail(mailtoLinks) || firstValidEmail(text);
+        }
         const classification = classifyPage({ url, title, text });
 
         if (classification.evidence) evidence.push(classification.evidence);
@@ -419,6 +459,7 @@ export async function inspectWebsite(website, { maxPages = 5, timeoutMs = PAGE_V
       signalSummary: summarizeSignal(bestSignal, opportunities),
       evidence,
       opportunities,
+      contactEmail: contactEmail || null,
       inspectedPages: seen.size,
     };
   } catch (err) {
@@ -428,6 +469,7 @@ export async function inspectWebsite(website, { maxPages = 5, timeoutMs = PAGE_V
       signalSummary: 'Website inspection failed',
       evidence,
       opportunities,
+      contactEmail: contactEmail || null,
       error: getErrorMessage(err),
     };
   } finally {

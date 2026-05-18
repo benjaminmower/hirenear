@@ -6,7 +6,7 @@ import { randomUUID } from 'crypto';
 import { config } from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { createNearbyJobsHandler } from './geoSearch.js';
+import { createNearbyJobsHandler, reverseGeocode } from './geoSearch.js';
 import {
   clampScoutRadius,
   getClientIp,
@@ -234,6 +234,22 @@ app.get('/api/jobs', async (req, res) => {
   } catch (err) {
     logError('jobs_search_failed', { requestId: req.requestId, error: err });
     res.status(500).json({ error: 'Failed to fetch jobs' });
+  }
+});
+
+app.get('/api/reverse-geocode', async (req, res) => {
+  const lat = Number(req.query.lat);
+  const lng = Number(req.query.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return res.status(400).json({ error: 'lat and lng are required' });
+  }
+
+  try {
+    const locationLabel = await reverseGeocode(lat, lng, MAPBOX_TOKEN);
+    res.json({ locationLabel: locationLabel || null });
+  } catch (err) {
+    logError('reverse_geocode_route_failed', { lat, lng, error: err });
+    res.status(500).json({ error: 'Failed to resolve location' });
   }
 });
 

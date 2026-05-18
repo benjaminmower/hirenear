@@ -1,4 +1,5 @@
 import { Suspense, lazy, useState } from 'react';
+import ForBusinessesPage from './components/ForBusinessesPage.jsx';
 import SearchPanel from './components/SearchPanel.jsx';
 import { MatchConfirmPage, MatchPage } from './components/MatchPages.jsx';
 import ScoutPanel from './components/ScoutPanel.jsx';
@@ -24,6 +25,10 @@ function getMatchRoute(pathname) {
 }
 
 export default function App() {
+  if (window.location.pathname.replace(/\/+$/, '') === '/for-businesses') {
+    return <ForBusinessesPage />;
+  }
+
   const matchRoute = getMatchRoute(window.location.pathname);
   if (matchRoute) {
     return matchRoute.confirm
@@ -38,15 +43,24 @@ function ScoutApp() {
   const isMobile = useMediaQuery('(max-width: 700px)');
   const [selectedJob, setSelectedJob] = useState(null);
   const [selectedBusiness, setSelectedBusiness] = useState(null);
-  const [geoRadius, setGeoRadius] = useState(1000);
+  const [geoRadius, setGeoRadius] = useState(1609);
   const scout = useScout();
   const [searchPin, setSearchPin] = useState(null);
+  const [searchLocationLabel, setSearchLocationLabel] = useState('');
   const [scoutOpen, setScoutOpen] = useState(scout.run?.id || false);
 
   const handlePinDrop = (lat, lng) => {
     setSelectedJob(null);
     setSelectedBusiness(null);
     setSearchPin({ lat, lng });
+    setSearchLocationLabel('Dropped pin');
+
+    fetch(`/api/reverse-geocode?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}`)
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (data?.locationLabel) setSearchLocationLabel(data.locationLabel);
+      })
+      .catch(() => {});
   };
 
   const scoutStats = {
@@ -110,6 +124,7 @@ function ScoutApp() {
         <ScoutPanel
           scout={scout}
           searchPin={searchPin}
+          locationLabel={searchLocationLabel}
           radius={geoRadius}
           onRadiusChange={setGeoRadius}
           selectedBusiness={selectedBusiness}

@@ -2,10 +2,10 @@ import { useMemo, useState, useCallback, useEffect } from 'react';
 import { useMediaQuery } from '../hooks/useMediaQuery.js';
 
 const RADII = [
-  { label: '500m', value: 500 },
-  { label: '1km', value: 1000 },
-  { label: '2km', value: 2000 },
-  { label: '5km', value: 5000 },
+  { label: '0.5 mi', value: 805 },
+  { label: '1 mi', value: 1609 },
+  { label: '2 mi', value: 3219 },
+  { label: '3 mi', value: 5000 },
 ];
 
 const TARGET_LANES = [
@@ -135,9 +135,18 @@ function isValidEmail(email) {
   return true;
 }
 
+function radiusLabel(value) {
+  const option = RADII.find(item => item.value === Number(value));
+  if (option) return option.label;
+  const miles = Number(value) / 1609.344;
+  if (!Number.isFinite(miles)) return '';
+  return `${miles >= 10 ? Math.round(miles) : miles.toFixed(miles < 1 ? 1 : 0)} mi`;
+}
+
 export default function ScoutPanel({
   scout,
   searchPin,
+  locationLabel,
   radius,
   onRadiusChange,
   onSelectBusiness,
@@ -199,6 +208,7 @@ export default function ScoutPanel({
   const lanesReady = targetLanes.length > 0;
   const canStart = Boolean(searchPin && resumeReady && lanesReady && !isRunning && !isDiscovering);
   const showReport = complete && scout.summary && reportDismissedRunId !== scout.run?.id;
+  const displayLocationLabel = scout.run?.locationLabel || locationLabel || (searchPin ? 'Dropped pin' : '');
   const sx = useCallback((key) => ({
     ...styles[key],
     ...(isMobile && mobileStyles[key] ? mobileStyles[key] : {}),
@@ -232,7 +242,7 @@ export default function ScoutPanel({
       lat: searchPin.lat,
       lng: searchPin.lng,
       radius,
-      locationLabel: 'Dropped pin',
+      locationLabel: displayLocationLabel || 'Dropped pin',
     });
   };
 
@@ -389,7 +399,7 @@ export default function ScoutPanel({
             <>
               <div style={styles.pinReadout}>
                 <span style={styles.readoutLabel}>Selected area</span>
-                <strong>{searchPin ? 'Dropped pin' : 'Waiting for a pin'}</strong>
+                <strong>{searchPin ? displayLocationLabel : 'Waiting for a pin'}</strong>
                 <span>{searchPin ? `${searchPin.lat.toFixed(4)}, ${searchPin.lng.toFixed(4)}` : 'Click the map to set the search center.'}</span>
               </div>
               <div style={sx('marketNotes')}>
@@ -445,7 +455,7 @@ export default function ScoutPanel({
               <div style={styles.reviewRows}>
                 <div style={sx('reviewRow')}>
                   <span>Area</span>
-                  <strong>{searchPin ? 'Dropped pin' : 'Missing pin'}</strong>
+                  <strong>{searchPin ? displayLocationLabel : 'Missing pin'}</strong>
                 </div>
                 <div style={sx('reviewRow')}>
                   <span>Resume</span>
@@ -523,7 +533,7 @@ export default function ScoutPanel({
             <div style={sx('runTitle')}>{stage}</div>
           </div>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-            <div style={styles.runPill}>{searchPin ? `${radius / 1000}km` : 'No pin'}</div>
+            <div style={styles.runPill}>{searchPin ? radiusLabel(radius) : 'No pin'}</div>
             <button
               type="button"
               style={styles.scoutCloseButton}
@@ -595,7 +605,7 @@ export default function ScoutPanel({
           </button>
         </div>
         <div style={styles.hint}>
-          {searchPin ? `Pin: ${searchPin.lat.toFixed(4)}, ${searchPin.lng.toFixed(4)}` : 'Click the map to drop a scout pin.'}
+          {searchPin ? `${displayLocationLabel}: ${searchPin.lat.toFixed(4)}, ${searchPin.lng.toFixed(4)}` : 'Click the map to drop a scout pin.'}
         </div>
         <div style={styles.notice}>
           Resume text is sent to this server and Claude's API for matching. Hire Near checks public business websites only after you click Visit, stores hiring classifications and evidence URLs, and deletes scout runs after 30 days.

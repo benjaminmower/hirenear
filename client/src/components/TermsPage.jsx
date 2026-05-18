@@ -87,6 +87,27 @@ export default function TermsPage() {
         </section>
 
         <section style={styles.section}>
+          <h2 style={styles.heading}>Age eligibility</h2>
+          <p style={styles.copy}>
+            You must be at least 18 years old to use Hire Near.
+          </p>
+        </section>
+
+        <section style={styles.section}>
+          <h2 style={styles.heading}>Limitation of liability</h2>
+          <p style={styles.copy}>
+            Hire Near is not liable for employment outcomes, damages arising from AI inaccuracies, business responses or lack thereof, or any indirect, incidental, or consequential damages.
+          </p>
+        </section>
+
+        <section style={styles.section}>
+          <h2 style={styles.heading}>Governing law</h2>
+          <p style={styles.copy}>
+            These terms are governed by the laws of the State of Utah, without regard to its conflict of law principles.
+          </p>
+        </section>
+
+        <section style={styles.section}>
           <h2 style={styles.heading}>Contact</h2>
           <p style={styles.copy}>
             Questions about these terms can be sent to <a href={`mailto:${CONTACT_EMAIL}`} style={styles.inlineLink}>{CONTACT_EMAIL}</a>.

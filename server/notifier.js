@@ -44,7 +44,11 @@ ${matchUrl}
 We're sending you this lead for free. If you'd like to keep receiving qualified local candidates, visit:
 ${getBaseUrl()}/for-businesses
 
-- Hirenear`;
+- Hirenear
+
+---
+To stop receiving these emails, reply with UNSUBSCRIBE.
+Hire Near, Salt Lake City, Utah`;
 }
 
 function buildDetailedBusinessLeadBody(businessName, fitScore, summary, signals, matchUrl) {
@@ -68,7 +72,11 @@ ${matchUrl}
 We're sending you this lead for free. If you'd like to keep receiving qualified local candidates, visit:
 ${getBaseUrl()}/for-businesses
 
-- Hirenear`;
+- Hirenear
+
+---
+To stop receiving these emails, reply with UNSUBSCRIBE.
+Hire Near, Salt Lake City, Utah`;
 }
 
 export async function sendBusinessNotifications(runId) {

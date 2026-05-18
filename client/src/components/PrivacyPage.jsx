@@ -47,7 +47,7 @@ export default function PrivacyPage() {
         <section style={styles.section}>
           <h2 style={styles.heading}>Third-party services</h2>
           <p style={styles.copy}>
-            Hire Near uses infrastructure and APIs including Google Cloud, Netlify, Mapbox, Google Places, Anthropic Claude, Resend, and database hosting. Resume text may be sent to this server and Anthropic Claude for matching. Business websites are checked using public pages only.
+            Hire Near uses infrastructure and APIs including Google Cloud, Mapbox, Google Places, Anthropic Claude, Resend, and database hosting. Resume text may be sent to this server and Anthropic Claude for matching. Anthropic does not use API inputs to train models. Business websites are checked using public pages only.
           </p>
         </section>
 
@@ -68,7 +68,7 @@ export default function PrivacyPage() {
         <section style={styles.section}>
           <h2 style={styles.heading}>Retention</h2>
           <p style={styles.copy}>
-            Scout runs are designed to expire after 30 days. You can delete a scout run from the product when it is available in your current browser session.
+            Scout runs expire and are deleted within 30 days. You can delete a scout run from the product when it is available in your current browser session. Seeker email addresses are retained only as long as needed to deliver match notifications to businesses and are deleted after the run expires.
           </p>
         </section>
 

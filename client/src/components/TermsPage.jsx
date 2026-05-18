@@ -94,9 +94,9 @@ export default function TermsPage() {
         </section>
 
         <section style={styles.section}>
-          <h2 style={styles.heading}>Limitation of liability</h2>
+          <h2 style={styles.heading}>No warranty</h2>
           <p style={styles.copy}>
-            Hire Near is not liable for employment outcomes, damages arising from AI inaccuracies, business responses or lack thereof, or any indirect, incidental, or consequential damages.
+            Hire Near is provided as-is for free without warranty of any kind. We make no guarantee about employment outcomes, match accuracy, business responses, or service availability. Use at your own risk.
           </p>
         </section>
 

@@ -19,7 +19,7 @@ import {
 } from './limits.js';
 import { migrate, query } from './db.js';
 import { getFunnelStats } from './analytics.js';
-import { sendBusinessNotifications } from './notifier.js';
+import { sendBusinessNotifications, sendBusinessSignupAlert } from './notifier.js';
 import { cleanupStaleScoutRuns, createScoutRun, deleteScoutRun, getScoutRun, runScout, visitBusiness, skipBusiness, subscribeScoutRun } from './scoutRunner.js';
 import { createRequestId, logError, logInfo, logWarn } from './logger.js';
 import { reserveDailyUsage } from './budgetGuard.js';
@@ -257,6 +257,82 @@ app.get('/api/nearby-jobs', createNearbyJobsHandler({
   cache,
   mapboxToken: MAPBOX_TOKEN,
 }));
+
+app.post('/api/business-signups', async (req, res) => {
+  const businessName = String(req.body?.businessName || '').trim().slice(0, 160);
+  const contactName = String(req.body?.contactName || '').trim().slice(0, 120);
+  const email = String(req.body?.email || '').trim().toLowerCase().slice(0, 254);
+  const city = String(req.body?.city || '').trim().slice(0, 100);
+  const state = String(req.body?.state || '').trim().slice(0, 60);
+  const hiringCategories = Array.isArray(req.body?.hiringCategories)
+    ? [...new Set(req.body.hiringCategories.map(item => String(item || '').trim()).filter(Boolean))].slice(0, 20)
+    : [];
+  const currentHiringChannel = String(req.body?.currentHiringChannel || '').trim().slice(0, 800);
+  const hiresPerYear = String(req.body?.hiresPerYear || '').trim().slice(0, 80);
+  const source = String(req.body?.source || 'for-businesses/signup').trim().slice(0, 120);
+
+  if (!businessName || !contactName || !isValidEmail(email) || !city || !state || hiringCategories.length === 0) {
+    logWarn('business_signup_rejected', {
+      requestId: req.requestId,
+      reason: 'missing_required_fields',
+      businessNamePresent: Boolean(businessName),
+      contactNamePresent: Boolean(contactName),
+      emailValid: isValidEmail(email),
+      cityPresent: Boolean(city),
+      statePresent: Boolean(state),
+      hiringCategoryCount: hiringCategories.length,
+    });
+    return res.status(400).json({ error: 'Business name, your name, valid email, city, state, and at least one hiring category are required.' });
+  }
+
+  try {
+    const result = await query(
+      `INSERT INTO business_signups
+        (business_name, contact_name, email, city, state, hiring_categories, current_hiring_channel, hires_per_year, source)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       RETURNING id, business_name, contact_name, email, city, state, hiring_categories, current_hiring_channel, hires_per_year, source, created_at`,
+      [
+        businessName,
+        contactName,
+        email,
+        city,
+        state,
+        JSON.stringify(hiringCategories),
+        currentHiringChannel || null,
+        hiresPerYear || null,
+        source || null,
+      ]
+    );
+    const row = result.rows[0];
+    const signup = {
+      id: row.id,
+      businessName: row.business_name,
+      contactName: row.contact_name,
+      email: row.email,
+      city: row.city,
+      state: row.state,
+      hiringCategories: row.hiring_categories || [],
+      currentHiringChannel: row.current_hiring_channel,
+      hiresPerYear: row.hires_per_year,
+      source: row.source,
+      createdAt: row.created_at,
+    };
+    const alert = await sendBusinessSignupAlert(signup);
+    logInfo('business_signup_created', {
+      requestId: req.requestId,
+      signupId: signup.id,
+      businessName: signup.businessName,
+      city: signup.city,
+      state: signup.state,
+      hiringCategoryCount: signup.hiringCategories.length,
+      alertSent: Boolean(alert.sent),
+    });
+    return res.status(201).json({ id: signup.id, alert });
+  } catch (err) {
+    logError('business_signup_failed', { requestId: req.requestId, error: err });
+    return res.status(500).json({ error: getErrorMessage(err) || 'Failed to submit business signup' });
+  }
+});
 
 app.post('/api/scout-runs', scoutRunRateLimit, async (req, res) => {
   const resumeText = String(req.body.resumeText || '').trim();

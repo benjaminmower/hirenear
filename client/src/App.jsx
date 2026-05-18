@@ -1,4 +1,5 @@
 import { Suspense, lazy, useRef, useState } from 'react';
+import BusinessSignupPage from './components/BusinessSignupPage.jsx';
 import ForBusinessesPage from './components/ForBusinessesPage.jsx';
 import PrivacyPage from './components/PrivacyPage.jsx';
 import { MatchConfirmPage, MatchPage } from './components/MatchPages.jsx';
@@ -50,6 +51,10 @@ export default function App() {
 
   if (normalizedPath === '/for-businesses') {
     return <ForBusinessesPage />;
+  }
+
+  if (normalizedPath === '/for-businesses/signup') {
+    return <BusinessSignupPage />;
   }
 
   if (normalizedPath === '/privacy') {
@@ -140,6 +145,7 @@ function ScoutApp() {
             <span style={styles.logoTagline}>Recruiting intelligence</span>
           </span>
         </div>
+        <a href="/for-businesses" className="business-header-link" style={styles.businessHeaderLink}>Hiring? &rarr;</a>
       </header>
 
       {/* Body */}
@@ -197,6 +203,7 @@ function ScoutApp() {
         button:hover:not(:disabled) { opacity: 0.85; }
         button:disabled { opacity: 0.5; cursor: not-allowed; }
         .job-card:hover { background: var(--bg-hover); }
+        .business-header-link:hover { text-decoration: underline !important; }
       `}</style>
     </div>
   );
@@ -266,6 +273,14 @@ const styles = {
     fontWeight: 800,
     color: '#8b8173',
     textTransform: 'uppercase',
+  },
+  businessHeaderLink: {
+    marginLeft: 'auto',
+    color: '#6f5f4c',
+    fontSize: 13,
+    fontWeight: 800,
+    textDecoration: 'none',
+    whiteSpace: 'nowrap',
   },
   body: {
     display: 'flex',

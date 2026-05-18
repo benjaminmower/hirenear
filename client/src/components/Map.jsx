@@ -765,7 +765,7 @@ export default function Map({
         }}
         onMouseEnter={(e) => e.target.style.color = '#e8eaf0'}
         onMouseLeave={(e) => e.target.style.color = '#a8b2c1'}
-        >For Businesses</a>
+        >For businesses ($50/mo)</a>
       </footer>
     </div>
   );

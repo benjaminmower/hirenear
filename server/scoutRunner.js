@@ -200,32 +200,24 @@ export async function cleanupStaleScoutRuns() {
 async function getFreshInspection(cacheKey) {
   const result = await query(
     `SELECT * FROM business_inspections
-     WHERE cache_key = $1 AND inspected_at > now() - ($2::text || ' hours')::interval`,
+     WHERE cache_key = $1
+       AND inspected_at > now() - ($2::text || ' hours')::interval
+     ORDER BY inspected_at DESC
+     LIMIT 1`,
     [cacheKey, TTL_HOURS]
   );
   return result.rows[0] || null;
 }
 
-async function saveInspection(cacheKey, placeId, website, inspection) {
+async function saveInspection(runId, cacheKey, placeId, website, inspection) {
   await query(
     `INSERT INTO business_inspections
-      (cache_key, place_id, domain, website, status, signal_strength, signal_summary, evidence, opportunities, contact_email, error, inspected_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,now())
-     ON CONFLICT (cache_key) DO UPDATE SET
-      place_id = EXCLUDED.place_id,
-      domain = EXCLUDED.domain,
-      website = EXCLUDED.website,
-      status = EXCLUDED.status,
-      signal_strength = EXCLUDED.signal_strength,
-      signal_summary = EXCLUDED.signal_summary,
-      evidence = EXCLUDED.evidence,
-      opportunities = EXCLUDED.opportunities,
-      contact_email = EXCLUDED.contact_email,
-      error = EXCLUDED.error,
-      inspected_at = now()`,
+      (cache_key, place_id, run_id, domain, website, status, signal_strength, signal_summary, evidence, opportunities, contact_email, error, inspected_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,now())`,
     [
       cacheKey,
       placeId,
+      runId,
       normalizeDomain(website),
       website,
       inspection.status,
@@ -237,7 +229,8 @@ async function saveInspection(cacheKey, placeId, website, inspection) {
       inspection.error || null,
     ]
   );
-  logInfo('business_inspection_cached', {
+  logInfo('business_inspection_recorded', {
+    runId,
     cacheKey,
     placeId,
     websitePresent: Boolean(website),
@@ -375,7 +368,7 @@ async function inspectBusiness({ run, business, cache }) {
     emitStep(run.id, 'Loading website...');
     inspection = await inspectWebsite(business.website, { runId: run.id, emitStep: (step) => emitStep(run.id, step) });
     emitStep(run.id, 'Scanning for hiring signals...');
-    await saveInspection(cacheKey, business.place_id, business.website, inspection);
+    await saveInspection(run.id, cacheKey, business.place_id, business.website, inspection);
   }
 
   let opportunities = [...(inspection.opportunities || [])];

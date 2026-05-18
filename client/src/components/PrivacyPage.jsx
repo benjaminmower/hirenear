@@ -59,6 +59,13 @@ export default function PrivacyPage() {
         </section>
 
         <section style={styles.section}>
+          <h2 style={styles.heading}>Business signups</h2>
+          <p style={styles.copy}>
+            If you sign up your business through Hire Near, we collect your business name, your name, your email address, city and state, the kinds of work you typically hire for, your current hiring channel, and rough hiring volume. We use this to contact you about Hire Near, send you qualified candidate introductions, and improve the service. We do not sell business contact information.
+          </p>
+        </section>
+
+        <section style={styles.section}>
           <h2 style={styles.heading}>What we do not do</h2>
           <p style={styles.copy}>
             Hire Near does not submit applications, fill out forms, solve CAPTCHAs, access private or authenticated pages, or crawl off-domain content for a business. We do not sell resume text.
@@ -69,6 +76,9 @@ export default function PrivacyPage() {
           <h2 style={styles.heading}>Retention</h2>
           <p style={styles.copy}>
             Scout runs expire and are deleted within 30 days. You can delete a scout run from the product when it is available in your current browser session. Seeker email addresses are retained only as long as needed to deliver match notifications to businesses and are deleted after the run expires.
+          </p>
+          <p style={{ ...styles.copy, marginTop: 12 }}>
+            Separately, Hire Near keeps a longitudinal record of public business hiring signals (such as "careers page detected" or "contact email visible") for up to 180 days to improve match quality over time. This record contains only public business information - no resume text, no seeker identity, and no record of contact between specific seekers and specific businesses.
           </p>
         </section>
 

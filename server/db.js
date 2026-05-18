@@ -68,8 +68,10 @@ async function runMigrations() {
     );
 
     CREATE TABLE IF NOT EXISTS business_inspections (
-      cache_key TEXT PRIMARY KEY,
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      cache_key TEXT NOT NULL,
       place_id TEXT,
+      run_id TEXT REFERENCES scout_runs(id) ON DELETE SET NULL,
       domain TEXT,
       website TEXT,
       status TEXT NOT NULL,
@@ -125,8 +127,27 @@ async function runMigrations() {
       seeker_confirmed_at TIMESTAMPTZ
     );
 
+    CREATE TABLE IF NOT EXISTS business_signups (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      business_name TEXT NOT NULL,
+      contact_name TEXT NOT NULL,
+      email TEXT NOT NULL,
+      city TEXT NOT NULL,
+      state TEXT NOT NULL,
+      hiring_categories JSONB NOT NULL DEFAULT '[]'::jsonb,
+      current_hiring_channel TEXT,
+      hires_per_year TEXT,
+      source TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      contacted_at TIMESTAMPTZ,
+      converted_at TIMESTAMPTZ
+    );
+
     CREATE INDEX IF NOT EXISTS idx_scout_interest_match_token
       ON scout_interest(match_token);
+
+    CREATE INDEX IF NOT EXISTS idx_business_signups_created_at
+      ON business_signups(created_at DESC);
   `);
 
   await pool.query(`
@@ -154,7 +175,64 @@ async function runMigrations() {
 
   await pool.query(`
     ALTER TABLE business_inspections
+      ADD COLUMN IF NOT EXISTS id UUID DEFAULT gen_random_uuid(),
+      ADD COLUMN IF NOT EXISTS run_id TEXT REFERENCES scout_runs(id) ON DELETE SET NULL,
       ADD COLUMN IF NOT EXISTS contact_email TEXT;
+  `);
+
+  await pool.query(`
+    UPDATE business_inspections
+    SET id = gen_random_uuid()
+    WHERE id IS NULL;
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        JOIN unnest(c.conkey) AS key(attnum) ON true
+        JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = key.attnum
+        WHERE n.nspname = 'public'
+          AND t.relname = 'business_inspections'
+          AND c.contype = 'p'
+          AND a.attname = 'cache_key'
+      ) THEN
+        ALTER TABLE business_inspections DROP CONSTRAINT IF EXISTS business_inspections_pkey;
+      END IF;
+    END
+    $$;
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        WHERE n.nspname = 'public'
+          AND t.relname = 'business_inspections'
+          AND c.contype = 'p'
+      ) THEN
+        ALTER TABLE business_inspections ADD PRIMARY KEY (id);
+      END IF;
+    END
+    $$;
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_business_inspections_cache_key_inspected_at
+      ON business_inspections(cache_key, inspected_at DESC);
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_business_inspections_domain_inspected_at
+      ON business_inspections(domain, inspected_at DESC);
   `);
 
   await pool.query(`
@@ -172,7 +250,23 @@ async function runMigrations() {
       ON scout_interest(match_token);
   `);
 
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_business_signups_created_at
+      ON business_signups(created_at DESC);
+  `);
+
   await pool.query(`DELETE FROM scout_runs WHERE created_at < now() - interval '30 days'`);
+
+  await pool.query(`
+    DELETE FROM business_inspections old
+    WHERE old.inspected_at < now() - interval '180 days'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM business_inspections recent
+        WHERE recent.cache_key = old.cache_key
+          AND recent.inspected_at > now() - interval '180 days'
+      )
+  `);
 }
 
 export async function query(text, params) {

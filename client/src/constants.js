@@ -1,0 +1,18 @@
+export const TARGET_LANES = [
+  'Finance',
+  'Healthcare',
+  'Hospitality',
+  'Office/Admin',
+  'Sales',
+  'Retail',
+  'Food service',
+  'Operations',
+  'Customer support',
+  'Logistics',
+  'Education',
+  'Skilled trades',
+  'Technology',
+  'Marketing',
+  'Nonprofit',
+  'Beauty/wellness',
+];

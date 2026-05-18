@@ -22,9 +22,9 @@ export default function ForBusinessesPage() {
   useEffect(() => {
     const previousBodyOverflow = document.body.style.overflow;
     const previousRootHeight = document.getElementById('root')?.style.height || '';
+    const root = document.getElementById('root');
 
     document.body.style.overflow = 'auto';
-    const root = document.getElementById('root');
     if (root) root.style.height = 'auto';
 
     return () => {
@@ -41,23 +41,46 @@ export default function ForBusinessesPage() {
           <a href={`mailto:${CONTACT_EMAIL}`} style={styles.navButton}>Talk to us</a>
         </nav>
 
-        <div style={{ ...styles.heroGrid, ...(isMobile ? styles.heroGridMobile : {}) }}>
-          <div style={styles.heroCopy}>
-            <p style={styles.kicker}>For local businesses</p>
-            <h1 style={{ ...styles.title, ...(isMobile ? styles.titleMobile : {}) }}>
-              Qualified nearby candidates, without another job board.
-            </h1>
-            <p style={styles.lede}>
-              Hire Near introduces people who already reviewed your business, matched their experience to your needs, and asked to be contacted.
-            </p>
-            <div style={styles.actions}>
-              <a href={`mailto:${CONTACT_EMAIL}?subject=Hire Near for my business`} style={styles.primaryButton}>
-                Contact Hire Near
-              </a>
-              <a href="/" style={styles.secondaryButton}>Scout as a job seeker</a>
-            </div>
+        <div style={{ ...styles.heroCopy, ...(isMobile ? styles.heroCopyMobile : {}) }}>
+          <p style={styles.kicker}>For local businesses</p>
+          <h1 style={{ ...styles.title, ...(isMobile ? styles.titleMobile : {}) }}>
+            Stop paying $45 per Craigslist post for crickets or the kitchen sink.
+          </h1>
+          <p style={styles.lede}>
+            Hire Near delivers a constant stream of qualified local candidates to your inbox - people who already reviewed your business and asked to talk. $50/month, cancel anytime.
+          </p>
+          <div style={styles.actions}>
+            <a href="/for-businesses/signup" style={styles.primaryButton}>
+              Become a design partner
+            </a>
+            <a href={`mailto:${CONTACT_EMAIL}?subject=Hire Near for my business`} style={styles.secondaryButton}>
+              Talk to us
+            </a>
           </div>
+        </div>
+      </section>
 
+      <section style={styles.section}>
+        <div style={styles.sectionHeader}>
+          <p style={styles.kicker}>What you get</p>
+          <h2 style={styles.sectionTitle}>A better signal than another job ad.</h2>
+        </div>
+        <div style={{ ...styles.offerGrid, ...(isMobile ? styles.offerGridMobile : {}) }}>
+          <div style={styles.offerCard}>
+            <h3 style={styles.offerTitle}>Qualified, not infinite.</h3>
+            <p style={styles.offerText}>Only candidates scoring 80%+ fit for your business reach you. No kitchen sink.</p>
+          </div>
+          <div style={styles.offerCard}>
+            <h3 style={styles.offerTitle}>Their idea, not ours.</h3>
+            <p style={styles.offerText}>Candidates pick you. They reviewed your business and asked to be introduced.</p>
+          </div>
+          <div style={styles.offerCard}>
+            <h3 style={styles.offerTitle}>Local, not remote.</h3>
+            <p style={styles.offerText}>Every candidate is already nearby and ready for in-person work.</p>
+          </div>
+        </div>
+
+        <div style={{ ...styles.proofGrid, ...(isMobile ? styles.proofGridMobile : {}) }}>
           <div style={styles.panel}>
             <div style={styles.panelLabel}>What employers receive</div>
             <div style={styles.leadCard}>
@@ -71,38 +94,23 @@ export default function ForBusinessesPage() {
               <div style={styles.signal}>Ready for nearby work</div>
             </div>
           </div>
-        </div>
-      </section>
-
-      <section style={styles.section}>
-        <div style={{ ...styles.steps, ...(isMobile ? styles.stepsMobile : {}) }}>
-          <div style={styles.step}>
-            <span style={styles.stepNumber}>1</span>
-            <h2 style={styles.stepTitle}>A candidate scouts nearby businesses</h2>
-            <p style={styles.stepText}>They paste their resume, choose target work, and decide which local businesses are worth contacting.</p>
-          </div>
-          <div style={styles.step}>
-            <span style={styles.stepNumber}>2</span>
-            <h2 style={styles.stepTitle}>Hire Near checks public signals</h2>
-            <p style={styles.stepText}>We look for hiring pages, contact paths, and role fit using public business information.</p>
-          </div>
-          <div style={styles.step}>
-            <span style={styles.stepNumber}>3</span>
-            <h2 style={styles.stepTitle}>You get a simple warm lead</h2>
-            <p style={styles.stepText}>If the candidate asks to be introduced, you receive a match link and can reply directly.</p>
+          <div style={styles.proofCopy}>
+            <h3 style={styles.proofTitle}>Warm introductions, not cold applicant floods.</h3>
+            <p style={styles.proofText}>
+              Hire Near starts from a real candidate's resume and neighborhood. We inspect public business signals, score fit, and only send the strongest matches when the candidate asks to be introduced.
+            </p>
           </div>
         </div>
       </section>
 
-      <section style={styles.footerBand}>
+      <section style={{ ...styles.pricingBand, ...(isMobile ? styles.pricingBandMobile : {}) }}>
         <div>
-          <div style={styles.footerTitle}>Want to receive qualified local candidates?</div>
-          <p style={styles.footerText}>Reply to the email you received, or contact Hire Near directly.</p>
+          <div style={styles.price}>$50/month</div>
+          <p style={styles.priceText}>Flat. Cancel anytime. First 10 design partners get 3 months free.</p>
         </div>
-        <a href={`mailto:${CONTACT_EMAIL}?subject=Hire Near business leads`} style={styles.primaryButton}>
-          {CONTACT_EMAIL}
-        </a>
+        <a href="/for-businesses/signup" style={styles.primaryButton}>Become a design partner</a>
       </section>
+
       <PublicFooter />
     </main>
   );
@@ -118,17 +126,17 @@ const styles = {
     fontFamily: font,
   },
   hero: {
-    minHeight: '76dvh',
-    padding: '24px 28px 52px',
+    minHeight: '64dvh',
+    padding: '24px 28px 46px',
     borderBottom: '1px solid #d9d3c9',
     display: 'flex',
     flexDirection: 'column',
-    gap: 54,
+    gap: 72,
   },
   heroMobile: {
     minHeight: 'auto',
     padding: '18px 14px 34px',
-    gap: 34,
+    gap: 42,
   },
   nav: {
     display: 'flex',
@@ -179,22 +187,15 @@ const styles = {
     fontWeight: 800,
     textDecoration: 'none',
   },
-  heroGrid: {
-    width: 'min(100%, 1120px)',
-    margin: '0 auto',
-    display: 'grid',
-    gridTemplateColumns: 'minmax(0, 1.12fr) minmax(320px, 0.88fr)',
-    gap: 48,
-    alignItems: 'center',
-  },
-  heroGridMobile: {
-    gridTemplateColumns: '1fr',
-    gap: 26,
-  },
   heroCopy: {
+    width: 'min(100%, 1040px)',
+    margin: '0 auto',
     display: 'flex',
     flexDirection: 'column',
     gap: 18,
+  },
+  heroCopyMobile: {
+    gap: 16,
   },
   kicker: {
     color: '#8b8173',
@@ -204,10 +205,10 @@ const styles = {
   },
   title: {
     fontFamily: 'Georgia, "Times New Roman", serif',
-    fontSize: 60,
+    fontSize: 62,
     lineHeight: 1.02,
     fontWeight: 800,
-    maxWidth: 720,
+    maxWidth: 920,
   },
   titleMobile: {
     fontSize: 38,
@@ -216,7 +217,7 @@ const styles = {
     color: '#4d5665',
     fontSize: 18,
     lineHeight: 1.65,
-    maxWidth: 680,
+    maxWidth: 760,
   },
   actions: {
     display: 'flex',
@@ -249,6 +250,54 @@ const styles = {
     fontSize: 14,
     fontWeight: 800,
     textDecoration: 'none',
+  },
+  section: {
+    width: 'min(calc(100% - 28px), 1120px)',
+    margin: '0 auto',
+    padding: '38px 0 34px',
+  },
+  sectionHeader: {
+    marginBottom: 16,
+  },
+  sectionTitle: {
+    fontFamily: 'Georgia, "Times New Roman", serif',
+    fontSize: 34,
+    lineHeight: 1.1,
+    marginTop: 6,
+  },
+  offerGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+    gap: 14,
+    marginBottom: 24,
+  },
+  offerGridMobile: {
+    gridTemplateColumns: '1fr',
+  },
+  offerCard: {
+    background: '#ffffff',
+    border: '1px solid #d9d3c9',
+    borderRadius: 6,
+    padding: 18,
+  },
+  offerTitle: {
+    fontSize: 17,
+    lineHeight: 1.3,
+    marginBottom: 8,
+  },
+  offerText: {
+    color: '#4d5665',
+    fontSize: 14,
+    lineHeight: 1.55,
+  },
+  proofGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(320px, 0.82fr) minmax(0, 1fr)',
+    gap: 18,
+    alignItems: 'stretch',
+  },
+  proofGridMobile: {
+    gridTemplateColumns: '1fr',
   },
   panel: {
     border: '1px solid #d9d3c9',
@@ -296,67 +345,51 @@ const styles = {
     fontSize: 13,
     fontWeight: 800,
   },
-  section: {
-    padding: '34px 28px',
-  },
-  steps: {
-    width: 'min(100%, 1120px)',
-    margin: '0 auto',
-    display: 'grid',
-    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-    gap: 14,
-  },
-  stepsMobile: {
-    gridTemplateColumns: '1fr',
-  },
-  step: {
-    background: '#ffffff',
+  proofCopy: {
     border: '1px solid #d9d3c9',
-    borderRadius: 6,
-    padding: 18,
-  },
-  stepNumber: {
-    display: 'inline-flex',
-    width: 28,
-    height: 28,
-    alignItems: 'center',
+    borderRadius: 8,
+    background: '#ffffff',
+    padding: 22,
+    display: 'flex',
+    flexDirection: 'column',
     justifyContent: 'center',
-    borderRadius: '50%',
-    background: '#f0e6dc',
-    color: '#b56d2a',
-    fontSize: 13,
-    fontWeight: 900,
-    marginBottom: 14,
+    gap: 10,
   },
-  stepTitle: {
-    fontSize: 17,
-    lineHeight: 1.3,
-    marginBottom: 8,
+  proofTitle: {
+    fontFamily: 'Georgia, "Times New Roman", serif',
+    fontSize: 30,
+    lineHeight: 1.1,
   },
-  stepText: {
+  proofText: {
     color: '#4d5665',
-    fontSize: 14,
-    lineHeight: 1.55,
+    fontSize: 15,
+    lineHeight: 1.7,
   },
-  footerBand: {
-    margin: '0 auto',
+  pricingBand: {
+    margin: '0 auto 38px',
     width: 'min(calc(100% - 28px), 1120px)',
     borderTop: '1px solid #d9d3c9',
-    padding: '26px 0 40px',
+    borderBottom: '1px solid #d9d3c9',
+    padding: '24px 0',
     display: 'flex',
-    flexWrap: 'wrap',
     justifyContent: 'space-between',
     alignItems: 'center',
     gap: 18,
   },
-  footerTitle: {
-    fontFamily: 'Georgia, "Times New Roman", serif',
-    fontSize: 26,
-    fontWeight: 800,
-    marginBottom: 5,
+  pricingBandMobile: {
+    alignItems: 'flex-start',
+    flexDirection: 'column',
   },
-  footerText: {
+  price: {
+    fontFamily: 'Georgia, "Times New Roman", serif',
+    fontSize: 34,
+    fontWeight: 800,
+    lineHeight: 1,
+  },
+  priceText: {
     color: '#4d5665',
     fontSize: 14,
+    lineHeight: 1.55,
+    marginTop: 8,
   },
 };

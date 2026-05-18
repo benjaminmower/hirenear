@@ -3,6 +3,7 @@ import { query } from './db.js';
 import { logError, logInfo, logWarn } from './logger.js';
 
 const QUALIFIED_SUBJECT = "Someone qualified is asking if you're hiring";
+const BUSINESS_SIGNUP_TO = 'hello@hirenear.app';
 
 let resendClient = null;
 
@@ -77,6 +78,50 @@ ${getBaseUrl()}/for-businesses
 ---
 To stop receiving these emails, reply with UNSUBSCRIBE.
 Hire Near, Salt Lake City, Utah`;
+}
+
+function buildBusinessSignupBody(signup) {
+  return `New Hire Near business signup
+
+Business: ${signup.businessName}
+Contact: ${signup.contactName}
+Email: ${signup.email}
+Location: ${signup.city}, ${signup.state}
+Hiring categories: ${(signup.hiringCategories || []).join(', ') || 'None provided'}
+Current hiring channel: ${signup.currentHiringChannel || 'Not provided'}
+Hires per year: ${signup.hiresPerYear || 'Not provided'}
+Source: ${signup.source || 'Not provided'}
+
+Follow up within 48 hours.`;
+}
+
+export async function sendBusinessSignupAlert(signup) {
+  const resendConfig = getResendConfig();
+  if (!resendConfig) {
+    logWarn('business_signup_alert_skipped', { reason: 'resend_not_configured', email: signup?.email });
+    return { configured: false, sent: false, reason: 'resend_not_configured' };
+  }
+
+  try {
+    const resend = getResend(resendConfig);
+    await resend.emails.send({
+      from: resendConfig.from,
+      to: BUSINESS_SIGNUP_TO,
+      replyTo: signup.email || resendConfig.replyTo,
+      subject: `New design partner signup: ${signup.businessName}`,
+      text: buildBusinessSignupBody(signup),
+    });
+    logInfo('business_signup_alert_sent', {
+      businessName: signup.businessName,
+      email: signup.email,
+      city: signup.city,
+      state: signup.state,
+    });
+    return { configured: true, sent: true };
+  } catch (err) {
+    logError('business_signup_alert_failed', { businessName: signup?.businessName, email: signup?.email, error: err });
+    return { configured: true, sent: false, reason: 'send_failed' };
+  }
 }
 
 export async function sendBusinessNotifications(runId) {

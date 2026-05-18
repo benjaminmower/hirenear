@@ -1,4 +1,5 @@
 import { useMemo, useState, useCallback, useEffect } from 'react';
+import { TARGET_LANES } from '../constants.js';
 import { useMediaQuery } from '../hooks/useMediaQuery.js';
 
 const RADII = [
@@ -6,25 +7,6 @@ const RADII = [
   { label: '1 mi', value: 1609 },
   { label: '2 mi', value: 3219 },
   { label: '3 mi', value: 5000 },
-];
-
-const TARGET_LANES = [
-  'Finance',
-  'Healthcare',
-  'Hospitality',
-  'Office/Admin',
-  'Sales',
-  'Retail',
-  'Food service',
-  'Operations',
-  'Customer support',
-  'Logistics',
-  'Education',
-  'Skilled trades',
-  'Technology',
-  'Marketing',
-  'Nonprofit',
-  'Beauty/wellness',
 ];
 
 const SETUP_STEPS = ['area', 'resume', 'lanes', 'launch'];

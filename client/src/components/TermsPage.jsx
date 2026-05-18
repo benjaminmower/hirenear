@@ -59,6 +59,13 @@ export default function TermsPage() {
         </section>
 
         <section style={styles.section}>
+          <h2 style={styles.heading}>Businesses using Hire Near</h2>
+          <p style={styles.copy}>
+            If you sign up your business, you authorize Hire Near to email you about candidate matches, design-partner onboarding, and product updates. You may unsubscribe at any time by replying to any email or contacting us. You are responsible for the accuracy of the information you provide about your business and for your own hiring decisions.
+          </p>
+        </section>
+
+        <section style={styles.section}>
           <h2 style={styles.heading}>Public website inspection only</h2>
           <p style={styles.copy}>
             Hire Near checks public business websites and public search results. We do not submit forms, solve CAPTCHAs, access authenticated pages, bypass technical restrictions, or apply to jobs on your behalf.
@@ -96,7 +103,7 @@ export default function TermsPage() {
         <section style={styles.section}>
           <h2 style={styles.heading}>No warranty</h2>
           <p style={styles.copy}>
-            Hire Near is provided as-is for free without warranty of any kind. We make no guarantee about employment outcomes, match accuracy, business responses, or service availability. Use at your own risk.
+            Hire Near is provided as-is without warranty of any kind. We make no guarantee about employment outcomes, match accuracy, business responses, or service availability. Use at your own risk.
           </p>
         </section>
 

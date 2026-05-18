@@ -143,6 +143,7 @@ function ScoutApp() {
         </div>
         <SearchPanel
           searchPin={searchPin}
+          locationLabel={searchLocationLabel}
           scoutStats={scoutStats}
         />
       </header>
@@ -160,19 +161,23 @@ function ScoutApp() {
               selectedJob={selectedJob}
               selectedBusiness={selectedBusiness}
               searchPin={searchPin}
+              locationLabel={searchLocationLabel}
               onSelectJob={setSelectedJob}
               onSelectBusiness={setSelectedBusiness}
               onPinDrop={handlePinDrop}
+              onScoutOpen={() => setScoutOpen(true)}
             />
           </Suspense>
 
           {/* Scout trigger button */}
-          <button
-            style={{ ...styles.scoutTrigger, ...(isMobile ? styles.scoutTriggerMobile : {}) }}
-            onClick={() => setScoutOpen(true)}
-          >
-            {scout.run?.id ? 'View scout run' : 'Scout this area'}
-          </button>
+          {(!searchPin || scout.run?.id) && (
+            <button
+              style={{ ...styles.scoutTrigger, ...(isMobile ? styles.scoutTriggerMobile : {}) }}
+              onClick={() => setScoutOpen(true)}
+            >
+              {scout.run?.id ? 'View scout run' : 'Scout this area'}
+            </button>
+          )}
 
           {/* Footer */}
           <footer style={styles.footer}>

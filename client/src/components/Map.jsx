@@ -104,9 +104,11 @@ export default function Map({
   selectedJob,
   selectedBusiness,
   searchPin,
+  locationLabel = '',
   onSelectJob,
   onSelectBusiness,
   onPinDrop,
+  onScoutOpen,
 }) {
   const isMobile = useMediaQuery('(max-width: 700px)');
   const containerRef = useRef(null);
@@ -114,10 +116,13 @@ export default function Map({
   const popupRef = useRef(null);
   const modeRef = useRef(mode);
   const onPinDropRef = useRef(onPinDrop);
+  const onScoutOpenRef = useRef(onScoutOpen);
   const [mapReady, setMapReady] = useState(false);
+  const [pinScreenPos, setPinScreenPos] = useState(null);
 
   useEffect(() => { modeRef.current = mode; }, [mode]);
   useEffect(() => { onPinDropRef.current = onPinDrop; }, [onPinDrop]);
+  useEffect(() => { onScoutOpenRef.current = onScoutOpen; }, [onScoutOpen]);
 
   // Init map
   useEffect(() => {
@@ -484,9 +489,128 @@ export default function Map({
     map.easeTo({ center: [selectedBusiness.lng, selectedBusiness.lat], duration: 400 });
   }, [selectedBusiness, isMobile]);
 
+  // Update pin screen position on map move/zoom/resize
+  useEffect(() => {
+    const map = mapRef.current;
+    const container = containerRef.current;
+    if (!map || !container || !searchPin || !mapReady) return;
+
+    const updatePinPos = () => {
+      const screenPoint = map.project([searchPin.lng, searchPin.lat]);
+      const containerWidth = container.offsetWidth;
+      const containerHeight = container.offsetHeight;
+      const cardWidth = 220;
+      const cardHeight = 80;
+      const padding = 12;
+
+      let x = screenPoint.x - cardWidth / 2;
+      let y = screenPoint.y - cardHeight - padding;
+
+      x = Math.max(padding, Math.min(x, containerWidth - cardWidth - padding));
+      y = Math.max(padding, Math.min(y, containerHeight - cardHeight - padding));
+
+      setPinScreenPos({ x, y });
+    };
+
+    updatePinPos();
+
+    map.on('move', updatePinPos);
+    map.on('zoom', updatePinPos);
+
+    const resizeObserver = new ResizeObserver(updatePinPos);
+    resizeObserver.observe(container);
+
+    return () => {
+      map.off('move', updatePinPos);
+      map.off('zoom', updatePinPos);
+      resizeObserver.disconnect();
+    };
+  }, [searchPin, mapReady]);
+
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+
+      {/* Pre-pin instruction overlay */}
+      {!searchPin && (
+        <div style={{
+          position: 'absolute',
+          bottom: isMobile ? 80 : 40,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          background: 'rgba(24, 32, 51, 0.88)',
+          color: '#ffffff',
+          padding: '12px 16px',
+          borderRadius: 8,
+          fontSize: 14,
+          fontWeight: 600,
+          fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+          backdropFilter: 'blur(4px)',
+          border: '1px solid rgba(255, 255, 255, 0.1)',
+          zIndex: 45,
+          textAlign: 'center',
+          maxWidth: '90%',
+          whiteSpace: 'nowrap',
+        }}>
+          Drop a pin to select the area you want to look for work
+        </div>
+      )}
+
+      {/* Anchored CTA near dropped pin */}
+      {searchPin && pinScreenPos && (
+        <div style={{
+          position: 'absolute',
+          left: pinScreenPos.x,
+          top: pinScreenPos.y,
+          background: '#182033',
+          color: '#ffffff',
+          padding: '12px 14px',
+          borderRadius: 8,
+          boxShadow: '0 8px 24px rgba(24, 32, 51, 0.3)',
+          zIndex: 45,
+          fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+          cursor: 'pointer',
+          border: '1px solid rgba(255, 255, 255, 0.1)',
+          transition: 'all 0.3s ease',
+          width: 220,
+        }}>
+          <div style={{
+            fontSize: 14,
+            fontWeight: 700,
+            marginBottom: 4,
+            lineHeight: 1.2,
+          }}>
+            Scout this area
+          </div>
+          <div style={{
+            fontSize: 12,
+            fontWeight: 500,
+            color: '#a8b2c1',
+            lineHeight: 1.2,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            maxHeight: '2em',
+          }}>
+            {locationLabel}
+          </div>
+          <button
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: '100%',
+              height: '100%',
+              opacity: 0,
+              cursor: 'pointer',
+              border: 'none',
+              background: 'none',
+              padding: 0,
+            }}
+            onClick={() => onScoutOpenRef.current?.()}
+            aria-label="Scout this area"
+          />
+        </div>
+      )}
     </div>
   );
 }

@@ -1,14 +1,15 @@
 export default function SearchPanel({
   searchPin,
+  locationLabel,
   scoutStats,
 }) {
-  const productDescription = 'A new way to job search: walk the neighborhood, choose who to visit, and decide where you want to apply.';
+  const productDescription = 'Drop a pin to select the area you want to look for work.';
   const scoutStatus = scoutStats?.status === 'complete'
     ? `${scoutStats.strongCount} strong signals from ${scoutStats.businessCount} places`
     : scoutStats?.status === 'running'
       ? `${scoutStats.checkedCount} checked · ${scoutStats.queuedCount} still queued`
       : searchPin
-        ? 'Area selected · complete the search brief'
+        ? `Looking near ${locationLabel}`
         : productDescription;
 
   return (

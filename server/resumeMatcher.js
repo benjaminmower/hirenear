@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { createHash } from 'crypto';
 import { logError, logInfo, logWarn } from './logger.js';
+import { reserveDailyUsage } from './budgetGuard.js';
 
 const DEFAULT_MODEL = process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001';
 const MAX_SIGNAL_LABEL_LENGTH = 60;
@@ -108,6 +109,7 @@ export async function extractResumeSignals(resumeText, targetLanes = []) {
   if (extractionCache.has(cacheKey)) return extractionCache.get(cacheKey);
 
   try {
+    reserveDailyUsage('anthropic', { operation: 'extract_resume_signals' });
     const response = await anthropic.messages.create({
       model: DEFAULT_MODEL,
       max_tokens: 700,
@@ -336,6 +338,7 @@ export async function matchResumeToBusiness({ resumeText, business, evidence, op
     return heuristicMatch({ business, opportunities });
   }
 
+  reserveDailyUsage('anthropic', { operation: 'single_business_match', businessId: business?.id });
   const response = await anthropic.messages.create({
     model: DEFAULT_MODEL,
     max_tokens: 700,
@@ -380,6 +383,7 @@ export async function matchScoutRunBatch({ resumeText, targetLanes = [], avoidTe
   }
 
   try {
+    reserveDailyUsage('anthropic', { operation: 'batch_match', businessCount: businesses.length });
     const response = await anthropic.messages.create({
       model: DEFAULT_MODEL,
       max_tokens: 4000,
@@ -428,6 +432,7 @@ export async function summarizeScoutRun({ resumeText, businesses }) {
     return `Scout complete. Found ${strongCount} strong hiring signals and ${weakCount} contact paths. Configure ANTHROPIC_API_KEY for a resume-specific summary.`;
   }
 
+  reserveDailyUsage('anthropic', { operation: 'summarize_scout_run', businessCount: businesses.length });
   const response = await anthropic.messages.create({
     model: DEFAULT_MODEL,
     max_tokens: 500,

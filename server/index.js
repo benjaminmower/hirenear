@@ -4,6 +4,8 @@ import rateLimit from 'express-rate-limit';
 import NodeCache from 'node-cache';
 import { randomUUID } from 'crypto';
 import { config } from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { createNearbyJobsHandler } from './geoSearch.js';
 import {
   clampScoutRadius,
@@ -20,15 +22,18 @@ import { getFunnelStats } from './analytics.js';
 import { sendBusinessNotifications } from './notifier.js';
 import { cleanupStaleScoutRuns, createScoutRun, deleteScoutRun, getScoutRun, runScout, visitBusiness, skipBusiness, subscribeScoutRun } from './scoutRunner.js';
 import { createRequestId, logError, logInfo, logWarn } from './logger.js';
+import { reserveDailyUsage } from './budgetGuard.js';
 
 config();
 
 const app = express();
 const cache = new NodeCache({ stdTTL: 86400 }); // 24 hour cache to respect free tier
 const sseConnections = new Map();
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const publicDir = path.join(__dirname, 'public');
 
 app.set('trust proxy', 1);
-app.use(cors({ origin: 'http://localhost:5173' }));
+app.use(cors({ origin: process.env.CORS_ORIGIN || 'http://localhost:5173' }));
 app.use(express.json({ limit: '1mb' }));
 app.use((req, res, next) => {
   const startedAt = Date.now();
@@ -141,6 +146,7 @@ async function geocodeLocation(location, company = null) {
     const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?access_token=${MAPBOX_TOKEN}&limit=1&types=place,region,district,locality,address,poi_label`;
 
     try {
+      reserveDailyUsage('mapbox', { operation: 'geocode_location' });
       const res = await fetch(url);
       const data = await res.json();
 
@@ -169,6 +175,7 @@ app.get('/api/jobs', async (req, res) => {
   if (cached) return res.json({ jobs: cached, fromCache: true });
 
   try {
+    reserveDailyUsage('searchApi', { operation: 'jobs_route', query: String(query).slice(0, 80) });
     const params = new URLSearchParams({
       engine: 'google_jobs',
       q: query,
@@ -268,6 +275,7 @@ app.post('/api/scout-runs', scoutRunRateLimit, async (req, res) => {
   }
 
   try {
+    reserveDailyUsage('scoutRuns', { operation: 'create_scout_run' });
     logInfo('scout_create_started', {
       requestId: req.requestId,
       resumeBytes: Buffer.byteLength(resumeText, 'utf8'),
@@ -434,12 +442,13 @@ app.post('/api/scout-runs/:runId/interest', async (req, res) => {
       if (business.contact_email) willNotify += 1;
     }
 
-    sendBusinessNotifications(runId).catch(err => {
+    const notification = await sendBusinessNotifications(runId).catch(err => {
       logError('interest_notification_unhandled', { requestId: req.requestId, runId, error: err });
+      return { configured: false, attempted: willNotify, sent: 0, seekerFollowupsSent: 0, failed: willNotify, reason: 'notification_error' };
     });
 
-    logInfo('interest_submit_completed', { requestId: req.requestId, runId, saved, willNotify });
-    return res.json({ saved, willNotify });
+    logInfo('interest_submit_completed', { requestId: req.requestId, runId, saved, willNotify, notification });
+    return res.json({ saved, willNotify, notification });
   } catch (err) {
     logError('interest_submit_failed', { requestId: req.requestId, runId, error: err });
     return res.status(500).json({ error: err.message || 'Failed to save scout interest' });
@@ -658,6 +667,20 @@ app.get('/api/scout-runs/:runId/events', (req, res) => {
 
 // --- Health check ---
 app.get('/api/health', (_, res) => res.json({ ok: true }));
+
+app.get('/runtime-config.js', (_, res) => {
+  res.type('application/javascript').send(`window.HIRENEAR_CONFIG=${JSON.stringify({
+    mapboxToken: MAPBOX_TOKEN || '',
+  })};`);
+});
+
+if (process.env.NODE_ENV === 'production') {
+  app.use(express.static(publicDir));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api/')) return next();
+    res.sendFile(path.join(publicDir, 'index.html'));
+  });
+}
 
 const PORT = process.env.PORT || 3001;
 migrate()

@@ -444,10 +444,12 @@ async function applyBatchMatches(run, businesses, opportunities) {
       match,
     });
 
-    await query(
+    const updateResult = await query(
       `UPDATE scout_businesses
        SET fit_score = $2, fit_reason = $3, next_step = $4, match_summary = $5, match_signals = $6, updated_at = now()
-        WHERE id = $1`,
+       WHERE id = $1
+         AND (fit_score IS NULL OR $2 >= fit_score)
+       RETURNING *`,
       [
         match.businessId,
         match.fitScore,
@@ -458,11 +460,19 @@ async function applyBatchMatches(run, businesses, opportunities) {
       ]
     );
 
-    const updatedBusiness = await query('SELECT * FROM scout_businesses WHERE id = $1', [match.businessId]);
-    const updatedBusinessRow = updatedBusiness.rows[0];
+    const updatedBusinessRow = updateResult.rows[0] || (await query('SELECT * FROM scout_businesses WHERE id = $1', [match.businessId])).rows[0];
     if (!updatedBusinessRow) {
       logWarn('batch_match_missing_business_row', { runId: run.id, businessId: match.businessId });
       continue;
+    }
+    if (updateResult.rowCount === 0) {
+      logInfo('business_match_downgrade_ignored', {
+        runId: run.id,
+        businessId: match.businessId,
+        existingFitScore: updatedBusinessRow.fit_score,
+        attemptedFitScore: match.fitScore,
+        matchLevel: match.matchLevel,
+      });
     }
     notifyBusinessIfQualified(updatedBusinessRow).catch(err => {
       logError('qualified_business_notification_unhandled', { runId: run.id, businessId: match.businessId, error: err });

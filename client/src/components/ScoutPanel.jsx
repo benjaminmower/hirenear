@@ -150,7 +150,9 @@ export default function ScoutPanel({
   const [interestEmail, setInterestEmail] = useState('');
   const [interestSubmitting, setInterestSubmitting] = useState(false);
   const [interestSubmittedRunId, setInterestSubmittedRunId] = useState(null);
+  const [interestResult, setInterestResult] = useState(null);
   const [interestError, setInterestError] = useState('');
+  const [reportDismissedRunId, setReportDismissedRunId] = useState(null);
   const [profile, setProfile] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem('hirenear:userProfile') || '{}');
@@ -193,6 +195,7 @@ export default function ScoutPanel({
   const resumeReady = resumeText.trim().length >= 40;
   const lanesReady = targetLanes.length > 0;
   const canStart = Boolean(searchPin && resumeReady && lanesReady && !isRunning && !isDiscovering);
+  const showReport = complete && scout.summary && reportDismissedRunId !== scout.run?.id;
 
   useEffect(() => {
     if (!scout.run) return;
@@ -204,12 +207,16 @@ export default function ScoutPanel({
     setInterestEmail(profile.email || '');
     setInterestSubmitting(false);
     setInterestSubmittedRunId(null);
+    setInterestResult(null);
     setInterestError('');
+    setReportDismissedRunId(null);
   }, [scout.run?.id]);
 
   const handleStart = () => {
     if (!searchPin) return;
     setInterestSubmittedRunId(null);
+    setInterestResult(null);
+    setReportDismissedRunId(null);
     setInterestError('');
     scout.startScout({
       resumeText,
@@ -268,6 +275,7 @@ export default function ScoutPanel({
       }
 
       setInterestSubmittedRunId(scout.run.id);
+      setInterestResult(data);
       setInterestEmail(seekerEmail);
       setProfile(current => ({ ...current, email: seekerEmail }));
       localStorage.setItem('hirenear:userProfile', JSON.stringify({
@@ -280,6 +288,22 @@ export default function ScoutPanel({
       setInterestSubmitting(false);
     }
   };
+
+  const interestDoneMessage = useMemo(() => {
+    if (!interestResult) return 'Interest saved.';
+    const sent = Number(interestResult.notification?.sent || 0);
+    const willNotify = Number(interestResult.willNotify || 0);
+    if (sent > 0) {
+      return `Done. We sent your interest to ${sent} business${sent === 1 ? '' : 'es'} with contact info.`;
+    }
+    if (willNotify > 0 && interestResult.notification?.configured === false) {
+      return `Interest saved for ${willNotify} business${willNotify === 1 ? '' : 'es'} with contact info, but outbound email is not configured on this server.`;
+    }
+    if (willNotify > 0) {
+      return `Interest saved. We found contact info for ${willNotify} business${willNotify === 1 ? '' : 'es'}, but no emails were sent.`;
+    }
+    return 'Interest saved. We did not find contact info for those businesses yet.';
+  }, [interestResult]);
 
   const handleVisit = useCallback(async (business) => {
     setVisiting(true);
@@ -620,49 +644,25 @@ export default function ScoutPanel({
         </div>
       )}
 
-      {/* Summary */}
       {complete && scout.summary && (
-        <div style={styles.summary}>{scout.summary}</div>
-      )}
-
-      {complete && highFitBusinesses.length > 0 && interestSubmittedRunId !== scout.run?.id && (
-        <div style={styles.interestPanel}>
-          <div style={styles.interestTitle}>Top-fit businesses ({INTEREST_THRESHOLD}%+)</div>
-          <div style={styles.interestList}>
-            {highFitBusinesses.map(business => (
-              <div key={business.id} style={styles.interestItem}>
-                <span>{business.name}</span>
-                <span style={styles.interestScore}>{business.fitScore}%</span>
-              </div>
-            ))}
+        <div style={styles.reportLauncher}>
+          <div>
+            <div style={styles.reportLauncherTitle}>Scout report ready</div>
+            <div style={styles.reportLauncherMeta}>{visitedCount} visited · {highFitBusinesses.length} top fits</div>
           </div>
-          <label style={styles.interestLabel} htmlFor="interest-email">
-            Enter your email to notify these businesses of your interest
-          </label>
-          <input
-            id="interest-email"
-            style={styles.input}
-            type="email"
-            value={interestEmail}
-            onChange={e => setInterestEmail(e.target.value)}
-            placeholder="you@example.com"
-            autoComplete="email"
-          />
-          {interestError && <div style={styles.interestError}>{interestError}</div>}
           <button
             type="button"
-            style={styles.button}
-            onClick={handleSubmitInterest}
-            disabled={interestSubmitting}
+            style={styles.reportLauncherButton}
+            onClick={() => setReportDismissedRunId(null)}
           >
-            {interestSubmitting ? 'Notifying...' : 'Notify businesses'}
+            Open report
           </button>
         </div>
       )}
 
       {complete && interestSubmittedRunId === scout.run?.id && (
         <div style={styles.interestDone}>
-          Done. If we found contact info for these businesses, they’ll hear from you shortly.
+          {interestDoneMessage}
         </div>
       )}
 
@@ -739,6 +739,110 @@ export default function ScoutPanel({
           );
         })}
       </div>
+
+      {showReport && (
+        <div style={styles.reportOverlay} role="dialog" aria-modal="true" aria-label="Scout report">
+          <div style={styles.reportShell}>
+            <div style={styles.reportHeader}>
+              <div>
+                <div style={styles.eyebrow}>Scout report</div>
+                <div style={styles.reportTitle}>Ranked neighborhood report</div>
+              </div>
+              <button
+                type="button"
+                style={styles.reportCloseButton}
+                onClick={() => setReportDismissedRunId(scout.run?.id)}
+              >
+                Close
+              </button>
+            </div>
+
+            <div style={styles.reportStats}>
+              <div style={styles.reportStat}><strong>{businesses.length}</strong><span>places</span></div>
+              <div style={styles.reportStat}><strong>{visitedCount}</strong><span>visited</span></div>
+              <div style={styles.reportStat}><strong>{strongCount}</strong><span>signals</span></div>
+              <div style={styles.reportStat}><strong>{highFitBusinesses.length}</strong><span>top fits</span></div>
+            </div>
+
+            <div style={styles.reportSummary}>{scout.summary}</div>
+
+            {highFitBusinesses.length > 0 && interestSubmittedRunId !== scout.run?.id && (
+              <div style={styles.reportInterest}>
+                <div>
+                  <div style={styles.reportSectionTitle}>Notify top-fit businesses</div>
+                  <div style={styles.reportCopy}>
+                    Send interest to businesses scoring {INTEREST_THRESHOLD}% or higher.
+                  </div>
+                </div>
+                <div style={styles.reportInterestList}>
+                  {highFitBusinesses.map(business => (
+                    <div key={business.id} style={styles.reportInterestItem}>
+                      <span>{business.name}</span>
+                      <strong>{business.fitScore}%</strong>
+                    </div>
+                  ))}
+                </div>
+                <div style={styles.reportInterestActions}>
+                  <input
+                    id="interest-email"
+                    style={styles.reportInput}
+                    type="email"
+                    value={interestEmail}
+                    onChange={e => setInterestEmail(e.target.value)}
+                    placeholder="you@example.com"
+                    autoComplete="email"
+                  />
+                  <button
+                    type="button"
+                    style={styles.reportPrimaryButton}
+                    onClick={handleSubmitInterest}
+                    disabled={interestSubmitting}
+                  >
+                    {interestSubmitting ? 'Notifying...' : 'Notify businesses'}
+                  </button>
+                </div>
+                {interestError && <div style={styles.interestError}>{interestError}</div>}
+              </div>
+            )}
+
+            {complete && interestSubmittedRunId === scout.run?.id && (
+              <div style={styles.reportDone}>
+                {interestDoneMessage}
+              </div>
+            )}
+
+            <div style={styles.reportSectionTitle}>Ranked businesses</div>
+            <div style={styles.reportGrid}>
+              {decidedBusinesses.filter(business => business.inspectionStatus !== 'skipped').map(business => {
+                const matchSignals = validMatchSignals(business.matchSignals);
+                return (
+                  <button
+                    key={business.id}
+                    type="button"
+                    style={styles.reportBusiness}
+                    onClick={() => {
+                      onSelectBusiness(business);
+                      setReportDismissedRunId(scout.run?.id);
+                    }}
+                  >
+                    <div style={styles.reportBusinessHeader}>
+                      <span>{business.name}</span>
+                      <strong>{business.fitScore ?? '--'}%</strong>
+                    </div>
+                    <div style={styles.reportBusinessMeta}>{business.vicinity}</div>
+                    <div style={styles.reportBusinessReason}>{business.fitReason || business.signalSummary || 'No summary available.'}</div>
+                    {matchSignals.slice(0, 3).map(signalItem => (
+                      <div key={`${business.id}:${signalItem.weight}:${signalItem.label}`} style={{ ...styles.reportSignal, ...matchSignalStyle(signalItem.weight) }}>
+                        {matchSignalPrefix(signalItem.weight)} {signalItem.label}
+                      </div>
+                    ))}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1136,13 +1240,31 @@ const styles = {
     fontSize: 10,
     textAlign: 'center',
   },
-  summary: {
-    padding: 18,
-    borderBottom: '1px solid #d9d3c9',
+  reportLauncher: {
+    margin: 12,
+    padding: 14,
+    border: '1px solid #d9d3c9',
+    borderLeft: '3px solid #18794e',
+    borderRadius: 6,
     background: '#ffffff',
-    color: '#182033',
-    fontSize: 13,
-    lineHeight: 1.6,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  reportLauncherTitle: { color: '#182033', fontSize: 13, fontWeight: 800 },
+  reportLauncherMeta: { color: '#6f5f4c', fontSize: 11, marginTop: 3 },
+  reportLauncherButton: {
+    background: '#182033',
+    border: 'none',
+    borderRadius: 4,
+    color: '#ffffff',
+    padding: '8px 10px',
+    font: 'inherit',
+    fontSize: 12,
+    fontWeight: 800,
+    cursor: 'pointer',
+    flexShrink: 0,
   },
   list: { overflowY: 'auto', flex: 1, padding: '10px 12px 16px', background: '#f7f8f5' },
   empty: {
@@ -1266,6 +1388,159 @@ const styles = {
     fontSize: 12,
     borderBottom: '1px solid var(--border)',
   },
+  reportOverlay: {
+    position: 'fixed',
+    inset: 0,
+    zIndex: 100,
+    background: 'rgba(24, 32, 51, 0.72)',
+    padding: 24,
+    overflow: 'auto',
+  },
+  reportShell: {
+    minHeight: 'calc(100dvh - 48px)',
+    maxWidth: 1180,
+    margin: '0 auto',
+    background: '#f7f8f5',
+    border: '1px solid #d9d3c9',
+    borderRadius: 8,
+    color: '#182033',
+    padding: 26,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 18,
+    boxShadow: '0 30px 90px rgba(0,0,0,0.35)',
+  },
+  reportHeader: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 16,
+  },
+  reportTitle: {
+    fontFamily: 'Georgia, "Times New Roman", serif',
+    fontSize: 38,
+    fontWeight: 800,
+    lineHeight: 1.05,
+  },
+  reportCloseButton: {
+    background: '#ffffff',
+    border: '1px solid #d9d3c9',
+    borderRadius: 4,
+    color: '#6f5f4c',
+    padding: '10px 12px',
+    font: 'inherit',
+    fontSize: 13,
+    fontWeight: 800,
+    cursor: 'pointer',
+  },
+  reportStats: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+    gap: 10,
+  },
+  reportStat: {
+    background: '#ffffff',
+    border: '1px solid #d9d3c9',
+    borderRadius: 6,
+    padding: 14,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 4,
+  },
+  reportSummary: {
+    background: '#ffffff',
+    border: '1px solid #d9d3c9',
+    borderRadius: 6,
+    padding: 18,
+    color: '#182033',
+    fontSize: 16,
+    lineHeight: 1.7,
+  },
+  reportInterest: {
+    background: '#ffffff',
+    border: '1px solid #b7dfcc',
+    borderLeft: '3px solid #18794e',
+    borderRadius: 6,
+    padding: 16,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 12,
+  },
+  reportSectionTitle: { color: '#182033', fontSize: 15, fontWeight: 800 },
+  reportCopy: { color: '#6f5f4c', fontSize: 13, marginTop: 4 },
+  reportInterestList: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+    gap: 8,
+  },
+  reportInterestItem: {
+    border: '1px solid #d9d3c9',
+    borderRadius: 4,
+    padding: '9px 10px',
+    display: 'flex',
+    justifyContent: 'space-between',
+    gap: 10,
+    fontSize: 13,
+  },
+  reportInterestActions: { display: 'flex', gap: 10 },
+  reportInput: {
+    flex: 1,
+    minWidth: 0,
+    background: '#ffffff',
+    border: '1px solid #d9d3c9',
+    borderRadius: 4,
+    color: '#182033',
+    padding: '10px 11px',
+    font: 'inherit',
+    fontSize: 13,
+    outline: 'none',
+  },
+  reportPrimaryButton: {
+    background: '#182033',
+    border: 'none',
+    borderRadius: 4,
+    color: '#ffffff',
+    padding: '10px 14px',
+    font: 'inherit',
+    fontSize: 13,
+    fontWeight: 800,
+    cursor: 'pointer',
+    flexShrink: 0,
+  },
+  reportDone: {
+    padding: 14,
+    border: '1px solid #b7dfcc',
+    borderRadius: 6,
+    background: '#e5f4ec',
+    color: '#0f5132',
+    fontSize: 13,
+  },
+  reportGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+    gap: 12,
+  },
+  reportBusiness: {
+    background: '#ffffff',
+    border: '1px solid #d9d3c9',
+    borderRadius: 6,
+    padding: 14,
+    color: '#182033',
+    font: 'inherit',
+    textAlign: 'left',
+    cursor: 'pointer',
+  },
+  reportBusinessHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    gap: 12,
+    color: '#182033',
+    fontSize: 15,
+    fontWeight: 800,
+  },
+  reportBusinessMeta: { color: '#6f5f4c', fontSize: 12, lineHeight: 1.4, marginTop: 5 },
+  reportBusinessReason: { color: '#4d5665', fontSize: 13, lineHeight: 1.45, marginTop: 10 },
+  reportSignal: { fontSize: 12, lineHeight: 1.35, marginTop: 6 },
   interestPanel: {
     margin: '0 12px 10px',
     padding: 12,

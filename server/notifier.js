@@ -91,7 +91,7 @@ export async function sendBusinessNotifications(runId) {
   const smtpConfig = getSmtpConfig();
   if (!smtpConfig) {
     logWarn('interest_notifications_skipped', { runId, reason: 'smtp_not_configured' });
-    return;
+    return { configured: false, attempted: 0, sent: 0, seekerFollowupsSent: 0, failed: 0, reason: 'smtp_not_configured' };
   }
 
   const result = await query(
@@ -106,11 +106,18 @@ export async function sendBusinessNotifications(runId) {
 
   if (result.rowCount === 0) {
     logInfo('interest_notifications_empty', { runId });
-    return;
+    return { configured: true, attempted: 0, sent: 0, seekerFollowupsSent: 0, failed: 0 };
   }
 
   const smtp = getTransporter(smtpConfig);
   logInfo('interest_notifications_started', { runId, count: result.rowCount });
+  const summary = {
+    configured: true,
+    attempted: result.rowCount,
+    sent: 0,
+    seekerFollowupsSent: 0,
+    failed: 0,
+  };
 
   for (const row of result.rows) {
     const matchUrl = `${getBaseUrl()}/match/${encodeURIComponent(row.match_token)}`;
@@ -137,6 +144,7 @@ export async function sendBusinessNotifications(runId) {
         businessName: row.business_name,
         fitScore: row.fit_score,
       });
+      summary.sent += 1;
 
       try {
         await smtp.sendMail({
@@ -153,13 +161,16 @@ ${confirmUrl}
 - Hirenear`,
         });
         logInfo('interest_seeker_followup_sent', { runId, scoutInterestId: row.id });
+        summary.seekerFollowupsSent += 1;
       } catch (err) {
         logError('interest_seeker_followup_failed', { runId, scoutInterestId: row.id, error: err });
       }
     } catch (err) {
+      summary.failed += 1;
       logError('interest_business_notification_failed', { runId, scoutInterestId: row.id, error: err });
     }
   }
+  return summary;
 }
 
 export async function notifyBusinessIfQualified(business) {

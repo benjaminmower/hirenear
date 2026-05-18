@@ -1,0 +1,1 @@
+window.HIRENEAR_CONFIG = window.HIRENEAR_CONFIG || {};

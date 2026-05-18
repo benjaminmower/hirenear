@@ -1,5 +1,6 @@
 import { clampScoutRadius, DEFAULT_SCOUT_RADIUS_METERS, getErrorMessage, MIN_SCOUT_RADIUS_METERS } from './limits.js';
 import { logError, logInfo, logWarn } from './logger.js';
+import { reserveDailyUsage } from './budgetGuard.js';
 
 const EXCLUDED_PLACE_TYPES = new Set([
   'atm',
@@ -131,6 +132,7 @@ export async function fetchNearbyPlaces(lat, lng, radius) {
     },
   };
 
+  reserveDailyUsage('googlePlaces', { operation: 'places_nearby_search' });
   const response = await fetch('https://places.googleapis.com/v1/places:searchNearby', {
     method: 'POST',
     headers: {
@@ -195,6 +197,7 @@ export async function searchJobsForCompany(companyName, cache, locationLabel = '
     num: '10',
   });
 
+  reserveDailyUsage('searchApi', { operation: 'company_job_search', companyName });
   const response = await fetch(`https://www.searchapi.io/api/v1/search?${params}`);
   const data = await response.json();
 
@@ -234,6 +237,7 @@ export async function reverseGeocode(lat, lng, mapboxToken = process.env.MAPBOX_
   if (!mapboxToken) return null;
   try {
     const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?access_token=${mapboxToken}&types=place,region&limit=1`;
+    reserveDailyUsage('mapbox', { operation: 'reverse_geocode' });
     const res = await fetch(url);
     const data = await res.json();
     const feature = data.features?.[0];
@@ -271,6 +275,7 @@ async function searchJobsByTitle({ title, locationLabel, cache }) {
     num: '10',
   });
 
+  reserveDailyUsage('searchApi', { operation: 'title_job_search', title: cleanTitle });
   const response = await fetch(`https://www.searchapi.io/api/v1/search?${params}`);
   const data = await response.json();
   if (!response.ok || data.error) {
@@ -304,6 +309,7 @@ async function fetchPlacesTextSearch({ query, lat, lng, radius }) {
     },
   };
 
+  reserveDailyUsage('googlePlaces', { operation: 'places_text_search', query });
   const response = await fetch('https://places.googleapis.com/v1/places:searchText', {
     method: 'POST',
     headers: {

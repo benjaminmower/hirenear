@@ -1,0 +1,9 @@
+[build]
+  command = "npm run build"
+  publish = "client/dist"
+
+[[redirects]]
+  from = "/api/*"
+  to = "https://hirenear-a7jlfl42zq-uw.a.run.app/api/:splat"
+  status = 200
+  force = true

@@ -724,6 +724,49 @@ export default function Map({
           />
         </div>
       )}
+
+      {/* Footer bar */}
+      <footer style={{
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        background: 'rgba(24, 32, 51, 0.92)',
+        borderTop: '1px solid rgba(255, 255, 255, 0.1)',
+        padding: isMobile ? '10px 12px' : '12px 20px',
+        display: 'flex',
+        gap: isMobile ? 10 : 16,
+        justifyContent: 'center',
+        fontSize: 12,
+        fontWeight: 500,
+        zIndex: 35,
+        backdropFilter: 'blur(4px)',
+      }}>
+        <a href="/privacy" style={{
+          color: '#a8b2c1',
+          textDecoration: 'none',
+          transition: 'color 0.2s',
+        }}
+        onMouseEnter={(e) => e.target.style.color = '#e8eaf0'}
+        onMouseLeave={(e) => e.target.style.color = '#a8b2c1'}
+        >Privacy</a>
+        <a href="/terms" style={{
+          color: '#a8b2c1',
+          textDecoration: 'none',
+          transition: 'color 0.2s',
+        }}
+        onMouseEnter={(e) => e.target.style.color = '#e8eaf0'}
+        onMouseLeave={(e) => e.target.style.color = '#a8b2c1'}
+        >Terms</a>
+        <a href="/for-businesses" style={{
+          color: '#a8b2c1',
+          textDecoration: 'none',
+          transition: 'color 0.2s',
+        }}
+        onMouseEnter={(e) => e.target.style.color = '#e8eaf0'}
+        onMouseLeave={(e) => e.target.style.color = '#a8b2c1'}
+        >For Businesses</a>
+      </footer>
     </div>
   );
 }

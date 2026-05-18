@@ -172,13 +172,6 @@ function ScoutApp() {
               {scout.run?.id ? 'View scout run' : 'Scout this area'}
             </button>
           )}
-
-          {/* Footer */}
-          <footer style={styles.footer}>
-            <a href="/privacy" style={styles.footerLink}>Privacy</a>
-            <a href="/terms" style={styles.footerLink}>Terms</a>
-            <a href="/for-businesses" style={styles.footerLink}>For Businesses</a>
-          </footer>
         </main>
       </div>
 
@@ -316,19 +309,5 @@ const styles = {
     background: 'var(--bg)',
     color: 'var(--text-secondary)',
     fontSize: 13,
-  },
-  footer: {
-    position: 'fixed',
-    bottom: 24,
-    right: 24,
-    display: 'flex',
-    gap: 14,
-    fontSize: 12,
-    zIndex: 50,
-  },
-  footerLink: {
-    color: '#8b8173',
-    textDecoration: 'none',
-    fontWeight: 600,
   },
 };

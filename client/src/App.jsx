@@ -1,4 +1,4 @@
-import { Suspense, lazy, useState } from 'react';
+import { Suspense, lazy, useRef, useState } from 'react';
 import ForBusinessesPage from './components/ForBusinessesPage.jsx';
 import SearchPanel from './components/SearchPanel.jsx';
 import { MatchConfirmPage, MatchPage } from './components/MatchPages.jsx';
@@ -7,6 +7,26 @@ import { useMediaQuery } from './hooks/useMediaQuery.js';
 import { useScout } from './hooks/useScout.js';
 
 const Map = lazy(() => import('./components/Map.jsx'));
+
+function coordinateLabel(lat, lng) {
+  return `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+}
+
+function labelFromMapboxFeature(feature) {
+  if (!feature) return '';
+
+  const context = feature.context || [];
+  const place = context.find(item => item.id?.startsWith('place.'))?.text;
+  const region = context.find(item => item.id?.startsWith('region.'));
+  const stateCode = region?.short_code?.replace('US-', '');
+  const type = feature.place_type?.[0];
+
+  if (type === 'neighborhood' || type === 'locality' || type === 'district') {
+    return [feature.text, place].filter(Boolean).join(', ');
+  }
+
+  return [feature.text, stateCode].filter(Boolean).join(', ');
+}
 
 function getMatchRoute(pathname) {
   const match = pathname.match(/^\/match\/([^/]+)(?:\/(confirm))?\/?$/);
@@ -47,20 +67,45 @@ function ScoutApp() {
   const scout = useScout();
   const [searchPin, setSearchPin] = useState(null);
   const [searchLocationLabel, setSearchLocationLabel] = useState('');
+  const pinRequestRef = useRef(0);
   const [scoutOpen, setScoutOpen] = useState(scout.run?.id || false);
 
   const handlePinDrop = (lat, lng) => {
+    const requestId = pinRequestRef.current + 1;
+    pinRequestRef.current = requestId;
     setSelectedJob(null);
     setSelectedBusiness(null);
     setSearchPin({ lat, lng });
-    setSearchLocationLabel('Dropped pin');
+    setSearchLocationLabel('Resolving area...');
 
     fetch(`/api/reverse-geocode?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}`)
       .then(res => res.ok ? res.json() : null)
-      .then(data => {
-        if (data?.locationLabel) setSearchLocationLabel(data.locationLabel);
+      .then(async data => {
+        if (pinRequestRef.current !== requestId) return;
+        if (data?.locationLabel) {
+          setSearchLocationLabel(data.locationLabel);
+          return;
+        }
+
+        const mapboxToken = window.HIRENEAR_CONFIG?.mapboxToken || import.meta.env.VITE_MAPBOX_TOKEN;
+        if (!mapboxToken) {
+          setSearchLocationLabel(coordinateLabel(lat, lng));
+          return;
+        }
+
+        const params = new URLSearchParams({
+          access_token: mapboxToken,
+          types: 'neighborhood,locality,place,district,region',
+          limit: '1',
+        });
+        const res = await fetch(`https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?${params}`);
+        const mapboxData = await res.json();
+        if (pinRequestRef.current !== requestId) return;
+        setSearchLocationLabel(labelFromMapboxFeature(mapboxData.features?.[0]) || coordinateLabel(lat, lng));
       })
-      .catch(() => {});
+      .catch(() => {
+        if (pinRequestRef.current === requestId) setSearchLocationLabel(coordinateLabel(lat, lng));
+      });
   };
 
   const scoutStats = {

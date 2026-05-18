@@ -236,16 +236,22 @@ export async function searchJobsForCompany(companyName, cache, locationLabel = '
 export async function reverseGeocode(lat, lng, mapboxToken = process.env.MAPBOX_TOKEN) {
   if (!mapboxToken) return null;
   try {
-    const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?access_token=${mapboxToken}&types=place,region&limit=1`;
+    const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?access_token=${mapboxToken}&types=neighborhood,locality,place,district,region&limit=1`;
     reserveDailyUsage('mapbox', { operation: 'reverse_geocode' });
     const res = await fetch(url);
     const data = await res.json();
     const feature = data.features?.[0];
     if (!feature) return null;
-    const city = feature.text;
+    const type = feature.place_type?.[0];
+    const placeContext = (feature.context || []).find(c => c.id.startsWith('place.'));
     const stateContext = (feature.context || []).find(c => c.id.startsWith('region.'));
     const stateCode = stateContext?.short_code?.replace('US-', '') || null;
-    return stateCode ? `${city}, ${stateCode}` : city;
+
+    if (['neighborhood', 'locality', 'district'].includes(type)) {
+      return [feature.text, placeContext?.text].filter(Boolean).join(', ');
+    }
+
+    return stateCode ? `${feature.text}, ${stateCode}` : feature.text;
   } catch {
     return null;
   }

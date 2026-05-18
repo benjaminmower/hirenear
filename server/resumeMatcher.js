@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { createHash } from 'crypto';
+import { logError, logInfo, logWarn } from './logger.js';
 
 const DEFAULT_MODEL = process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001';
 const MAX_SIGNAL_LABEL_LENGTH = 60;
@@ -98,7 +99,10 @@ function normalizeSignals(raw = {}, targetLanes = []) {
 export async function extractResumeSignals(resumeText, targetLanes = []) {
   const fallback = fallbackSignals(targetLanes);
   const anthropic = getClient();
-  if (!anthropic) return fallback;
+  if (!anthropic) {
+    logWarn('resume_signal_extraction_fallback', { reason: 'anthropic_not_configured', targetLanes });
+    return fallback;
+  }
 
   const cacheKey = createHash('sha256').update(resumeText + JSON.stringify(targetLanes)).digest('hex');
   if (extractionCache.has(cacheKey)) return extractionCache.get(cacheKey);
@@ -134,15 +138,20 @@ export async function extractResumeSignals(resumeText, targetLanes = []) {
     const signals = normalizeSignals(raw, targetLanes);
 
     if (signals.jobSearchTitles.length === 0) {
-      console.warn('[extractResumeSignals] Claude returned no job titles, using targetLanes fallback');
+      logWarn('resume_signal_extraction_fallback', { reason: 'empty_job_titles', targetLanes });
       return fallback;
     }
 
-    console.log('[extractResumeSignals] extracted job title count:', signals.jobSearchTitles.length);
+    logInfo('resume_signal_extraction_provider_completed', {
+      jobSearchTitleCount: signals.jobSearchTitles.length,
+      employerSearchQueryCount: signals.employerSearchQueries.length,
+      preferredIndustryCount: signals.preferredIndustries.length,
+      skillCount: signals.skills.length,
+    });
     extractionCache.set(cacheKey, signals);
     return signals;
   } catch (err) {
-    console.warn('[extractResumeSignals] failed, using fallback:', err.message);
+    logError('resume_signal_extraction_provider_failed', { error: err });
     return fallback;
   }
 }
@@ -323,6 +332,7 @@ function normalizeBatch(raw, businesses, opportunities, targetLanes, avoidTerms)
 export async function matchResumeToBusiness({ resumeText, business, evidence, opportunities }) {
   const anthropic = getClient();
   if (!anthropic) {
+    logWarn('single_match_fallback', { reason: 'anthropic_not_configured', businessId: business?.id });
     return heuristicMatch({ business, opportunities });
   }
 
@@ -365,6 +375,7 @@ export async function matchResumeToBusiness({ resumeText, business, evidence, op
 export async function matchScoutRunBatch({ resumeText, targetLanes = [], avoidTerms = '', businesses, opportunities }) {
   const anthropic = getClient();
   if (!anthropic) {
+    logWarn('batch_match_fallback', { reason: 'anthropic_not_configured', businessCount: businesses.length, opportunityCount: opportunities.length });
     return heuristicBatch({ businesses, opportunities, targetLanes, avoidTerms });
   }
 
@@ -404,7 +415,7 @@ export async function matchScoutRunBatch({ resumeText, targetLanes = [], avoidTe
 
     return normalizeBatch(parseClaudeJson(text), businesses, opportunities, targetLanes, avoidTerms);
   } catch (err) {
-    console.warn('Claude batch match failed; falling back to heuristic matching:', err.message);
+    logError('batch_match_provider_failed', { businessCount: businesses.length, opportunityCount: opportunities.length, error: err });
     return heuristicBatch({ businesses, opportunities, targetLanes, avoidTerms });
   }
 }

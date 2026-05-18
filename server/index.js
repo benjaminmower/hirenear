@@ -19,6 +19,7 @@ import { migrate, query } from './db.js';
 import { getFunnelStats } from './analytics.js';
 import { sendBusinessNotifications } from './notifier.js';
 import { cleanupStaleScoutRuns, createScoutRun, deleteScoutRun, getScoutRun, runScout, visitBusiness, skipBusiness, subscribeScoutRun } from './scoutRunner.js';
+import { createRequestId, logError, logInfo, logWarn } from './logger.js';
 
 config();
 
@@ -29,6 +30,23 @@ const sseConnections = new Map();
 app.set('trust proxy', 1);
 app.use(cors({ origin: 'http://localhost:5173' }));
 app.use(express.json({ limit: '1mb' }));
+app.use((req, res, next) => {
+  const startedAt = Date.now();
+  req.requestId = req.headers['x-request-id'] || createRequestId();
+  res.setHeader('x-request-id', req.requestId);
+  res.on('finish', () => {
+    logInfo('http_request_finished', {
+      requestId: req.requestId,
+      method: req.method,
+      path: req.path,
+      statusCode: res.statusCode,
+      durationMs: Date.now() - startedAt,
+      ip: getClientIp(req),
+      userAgent: req.headers['user-agent'],
+    });
+  });
+  next();
+});
 app.use('/api', rateLimit({
   windowMs: 60 * 1000,
   max: 60,
@@ -86,7 +104,11 @@ function isValidEmail(email) {
 }
 
 if (!SEARCH_API_KEY || !MAPBOX_TOKEN || !GOOGLE_PLACES_API_KEY) {
-  console.warn('⚠️  Missing env vars. Copy .env.example to .env and fill in your keys.');
+  logWarn('config_missing_required_env', {
+    searchApiConfigured: Boolean(SEARCH_API_KEY),
+    mapboxConfigured: Boolean(MAPBOX_TOKEN),
+    googlePlacesConfigured: Boolean(GOOGLE_PLACES_API_KEY),
+  });
 }
 
 function trackSseConnection(ip, connection) {
@@ -129,7 +151,7 @@ async function geocodeLocation(location, company = null) {
         return result;
       }
     } catch (err) {
-      console.error(`Geocoding error for "${query}":`, getErrorMessage(err));
+      logError('geocode_failed', { query, error: err });
     }
   }
 
@@ -160,7 +182,8 @@ app.get('/api/jobs', async (req, res) => {
     const apiRes = await fetch(`https://www.searchapi.io/api/v1/search?${params}`);
     const apiData = await apiRes.json();
 
-    console.log(`[${query}] SearchAPI response:`, {
+    logInfo('jobs_searchapi_response', {
+      query,
       status: apiRes.status,
       error: apiData.error,
       jobsCount: apiData.jobs_results?.length || 0,
@@ -202,7 +225,7 @@ app.get('/api/jobs', async (req, res) => {
     cache.set(cacheKey, jobs);
     res.json({ jobs, fromCache: false });
   } catch (err) {
-    console.error('Job search error:', getErrorMessage(err));
+    logError('jobs_search_failed', { requestId: req.requestId, error: err });
     res.status(500).json({ error: 'Failed to fetch jobs' });
   }
 });
@@ -224,27 +247,45 @@ app.post('/api/scout-runs', scoutRunRateLimit, async (req, res) => {
   const avoidTerms = String(req.body.avoidTerms || '').trim().slice(0, 300);
 
   if (resumeText.length < 40) {
+    logWarn('scout_create_rejected', { requestId: req.requestId, reason: 'resume_too_short' });
     return res.status(400).json({ error: 'resumeText is required and must be at least 40 characters' });
   }
   if (Buffer.byteLength(resumeText, 'utf8') > MAX_RESUME_BYTES) {
+    logWarn('scout_create_rejected', { requestId: req.requestId, reason: 'resume_too_large' });
     return res.status(400).json({ error: 'resumeText must be 15KB or smaller before starting a scout run' });
   }
   if (targetLanes.length === 0) {
+    logWarn('scout_create_rejected', { requestId: req.requestId, reason: 'missing_target_lanes' });
     return res.status(400).json({ error: 'Choose at least one kind of work to target' });
   }
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    logWarn('scout_create_rejected', { requestId: req.requestId, reason: 'invalid_coordinates' });
     return res.status(400).json({ error: 'lat and lng are required' });
   }
   if (!Number.isFinite(radius) || radius < MIN_SCOUT_RADIUS_METERS) {
+    logWarn('scout_create_rejected', { requestId: req.requestId, reason: 'invalid_radius', radius });
     return res.status(400).json({ error: `radius must be at least ${MIN_SCOUT_RADIUS_METERS} meters and no more than ${MAX_SCOUT_RADIUS_METERS} meters` });
   }
 
   try {
+    logInfo('scout_create_started', {
+      requestId: req.requestId,
+      resumeBytes: Buffer.byteLength(resumeText, 'utf8'),
+      targetLanes,
+      avoidTermsPresent: Boolean(avoidTerms),
+      lat,
+      lng,
+      radius,
+      locationLabel,
+    });
     const runId = await createScoutRun({ resumeText, lat, lng, radius, locationLabel, targetLanes, avoidTerms });
+    logInfo('scout_create_accepted', { requestId: req.requestId, runId });
     res.status(202).json({ runId });
-    runScout(runId, cache);
+    runScout(runId, cache).catch(err => {
+      logError('scout_background_run_unhandled', { requestId: req.requestId, runId, error: err });
+    });
   } catch (err) {
-    console.error('Create scout run error:', getErrorMessage(err));
+    logError('scout_create_failed', { requestId: req.requestId, error: err });
     res.status(500).json({ error: getErrorMessage(err) || 'Failed to create scout run' });
   }
 });
@@ -252,10 +293,21 @@ app.post('/api/scout-runs', scoutRunRateLimit, async (req, res) => {
 app.get('/api/scout-runs/:runId', async (req, res) => {
   try {
     const run = await getScoutRun(req.params.runId);
-    if (!run) return res.status(404).json({ error: 'Scout run not found' });
+    if (!run) {
+      logWarn('scout_get_not_found', { requestId: req.requestId, runId: req.params.runId });
+      return res.status(404).json({ error: 'Scout run not found' });
+    }
+    logInfo('scout_get_loaded', {
+      requestId: req.requestId,
+      runId: req.params.runId,
+      status: run.run.status,
+      businessCount: run.businesses.length,
+      opportunityCount: run.opportunities.length,
+      matchCount: run.matches.length,
+    });
     res.json(run);
   } catch (err) {
-    console.error('Get scout run error:', getErrorMessage(err));
+    logError('scout_get_failed', { requestId: req.requestId, runId: req.params.runId, error: err });
     res.status(500).json({ error: getErrorMessage(err) || 'Failed to load scout run' });
   }
 });
@@ -263,30 +315,40 @@ app.get('/api/scout-runs/:runId', async (req, res) => {
 app.delete('/api/scout-runs/:runId', async (req, res) => {
   try {
     const deleted = await deleteScoutRun(req.params.runId);
-    if (!deleted) return res.status(404).json({ error: 'Scout run not found' });
+    if (!deleted) {
+      logWarn('scout_delete_not_found', { requestId: req.requestId, runId: req.params.runId });
+      return res.status(404).json({ error: 'Scout run not found' });
+    }
+    logInfo('scout_deleted', { requestId: req.requestId, runId: req.params.runId });
     res.status(204).end();
   } catch (err) {
-    console.error('Delete scout run error:', getErrorMessage(err));
+    logError('scout_delete_failed', { requestId: req.requestId, runId: req.params.runId, error: err });
     res.status(500).json({ error: getErrorMessage(err) || 'Failed to delete scout run' });
   }
 });
 
 app.post('/api/scout-runs/:runId/visit/:placeId', async (req, res) => {
   try {
+    logInfo('business_visit_requested', { requestId: req.requestId, runId: req.params.runId, placeId: req.params.placeId });
     res.status(202).json({ ok: true });
-    visitBusiness(req.params.runId, req.params.placeId, cache);
+    visitBusiness(req.params.runId, req.params.placeId, cache).catch(err => {
+      logError('business_visit_unhandled', { requestId: req.requestId, runId: req.params.runId, placeId: req.params.placeId, error: err });
+    });
   } catch (err) {
-    console.error('Visit business error:', getErrorMessage(err));
+    logError('business_visit_request_failed', { requestId: req.requestId, runId: req.params.runId, placeId: req.params.placeId, error: err });
     res.status(500).json({ error: getErrorMessage(err) || 'Failed to visit business' });
   }
 });
 
 app.post('/api/scout-runs/:runId/skip/:placeId', async (req, res) => {
   try {
+    logInfo('business_skip_requested', { requestId: req.requestId, runId: req.params.runId, placeId: req.params.placeId });
     res.status(202).json({ ok: true });
-    skipBusiness(req.params.runId, req.params.placeId);
+    skipBusiness(req.params.runId, req.params.placeId).catch(err => {
+      logError('business_skip_unhandled', { requestId: req.requestId, runId: req.params.runId, placeId: req.params.placeId, error: err });
+    });
   } catch (err) {
-    console.error('Skip business error:', getErrorMessage(err));
+    logError('business_skip_request_failed', { requestId: req.requestId, runId: req.params.runId, placeId: req.params.placeId, error: err });
     res.status(500).json({ error: getErrorMessage(err) || 'Failed to skip business' });
   }
 });
@@ -297,10 +359,12 @@ app.post('/api/scout-runs/:runId/interest', async (req, res) => {
   const rawPlaceIds = Array.isArray(req.body?.businessPlaceIds) ? req.body.businessPlaceIds : null;
 
   if (!isValidEmail(seekerEmail)) {
+    logWarn('interest_submit_rejected', { requestId: req.requestId, runId, reason: 'invalid_email' });
     return res.status(400).json({ error: 'seekerEmail must be a valid email address' });
   }
 
   if (!rawPlaceIds || rawPlaceIds.length === 0 || rawPlaceIds.length > 10) {
+    logWarn('interest_submit_rejected', { requestId: req.requestId, runId, reason: 'invalid_place_ids_count', count: rawPlaceIds?.length || 0 });
     return res.status(400).json({ error: 'businessPlaceIds must be a non-empty array with at most 10 entries' });
   }
 
@@ -309,20 +373,29 @@ app.post('/api/scout-runs/:runId/interest', async (req, res) => {
     .filter(Boolean);
 
   if (businessPlaceIds.length === 0) {
+    logWarn('interest_submit_rejected', { requestId: req.requestId, runId, reason: 'empty_place_ids' });
     return res.status(400).json({ error: 'businessPlaceIds must contain valid place ids' });
   }
 
   try {
+    logInfo('interest_submit_started', {
+      requestId: req.requestId,
+      runId,
+      requestedBusinessCount: businessPlaceIds.length,
+    });
     const runResult = await query('SELECT id, status FROM scout_runs WHERE id = $1', [runId]);
     if (runResult.rowCount === 0) {
+      logWarn('interest_submit_rejected', { requestId: req.requestId, runId, reason: 'run_not_found' });
       return res.status(404).json({ error: 'Scout run not found' });
     }
     if (runResult.rows[0].status !== 'complete') {
+      logWarn('interest_submit_rejected', { requestId: req.requestId, runId, reason: 'run_not_complete', status: runResult.rows[0].status });
       return res.status(400).json({ error: 'Scout run must be complete before submitting interest' });
     }
 
     const existing = await query('SELECT 1 FROM scout_interest WHERE run_id = $1 LIMIT 1', [runId]);
     if (existing.rowCount > 0) {
+      logWarn('interest_submit_rejected', { requestId: req.requestId, runId, reason: 'duplicate_interest' });
       return res.status(409).json({ error: 'Interest already submitted for this run' });
     }
 
@@ -362,12 +435,13 @@ app.post('/api/scout-runs/:runId/interest', async (req, res) => {
     }
 
     sendBusinessNotifications(runId).catch(err => {
-      console.error('sendBusinessNotifications error:', err.message || String(err));
+      logError('interest_notification_unhandled', { requestId: req.requestId, runId, error: err });
     });
 
+    logInfo('interest_submit_completed', { requestId: req.requestId, runId, saved, willNotify });
     return res.json({ saved, willNotify });
   } catch (err) {
-    console.error('Save scout interest error:', err);
+    logError('interest_submit_failed', { requestId: req.requestId, runId, error: err });
     return res.status(500).json({ error: err.message || 'Failed to save scout interest' });
   }
 });
@@ -385,6 +459,7 @@ app.get('/api/match/:token', async (req, res) => {
     );
 
     if (result.rowCount === 0) {
+      logWarn('match_link_not_found', { requestId: req.requestId, tokenPrefix: token.slice(0, 8) });
       return res.status(404).json({ error: 'Match not found' });
     }
 
@@ -399,6 +474,12 @@ app.get('/api/match/:token', async (req, res) => {
       );
     }
 
+    logInfo('match_link_opened', {
+      requestId: req.requestId,
+      scoutInterestId: match.id,
+      firstOpen: !match.opened_at,
+      alreadyContacted: Boolean(match.contacted_at),
+    });
     return res.json({
       businessName: match.business_name,
       fitScore: match.fit_score,
@@ -406,7 +487,7 @@ app.get('/api/match/:token', async (req, res) => {
       alreadyContacted: Boolean(match.contacted_at),
     });
   } catch (err) {
-    console.error('Get match error:', err);
+    logError('match_link_load_failed', { requestId: req.requestId, tokenPrefix: token.slice(0, 8), error: err });
     return res.status(500).json({ error: err.message || 'Failed to load match' });
   }
 });
@@ -424,11 +505,13 @@ app.post('/api/match/:token/contact', async (req, res) => {
     );
 
     if (result.rowCount === 0) {
+      logWarn('match_contact_not_found', { requestId: req.requestId, tokenPrefix: token.slice(0, 8) });
       return res.status(404).json({ error: 'Match not found' });
     }
 
     const match = result.rows[0];
     if (match.contacted_at) {
+      logWarn('match_contact_duplicate', { requestId: req.requestId, scoutInterestId: match.id });
       return res.status(409).json({ error: 'Match already contacted' });
     }
 
@@ -442,12 +525,14 @@ app.post('/api/match/:token/contact', async (req, res) => {
     );
 
     if (updated.rowCount === 0) {
+      logWarn('match_contact_race_duplicate', { requestId: req.requestId, scoutInterestId: match.id });
       return res.status(409).json({ error: 'Match already contacted' });
     }
 
+    logInfo('match_contact_completed', { requestId: req.requestId, scoutInterestId: match.id });
     return res.json({ seekerEmail: updated.rows[0].seeker_email });
   } catch (err) {
-    console.error('Contact match error:', err);
+    logError('match_contact_failed', { requestId: req.requestId, tokenPrefix: token.slice(0, 8), error: err });
     return res.status(500).json({ error: err.message || 'Failed to contact match' });
   }
 });
@@ -465,6 +550,7 @@ app.get('/api/match/:token/confirm', async (req, res) => {
     );
 
     if (result.rowCount === 0) {
+      logWarn('match_confirm_not_found', { requestId: req.requestId, tokenPrefix: token.slice(0, 8) });
       return res.status(404).json({ error: 'Match not found' });
     }
 
@@ -477,12 +563,13 @@ app.get('/api/match/:token/confirm', async (req, res) => {
       [match.id]
     );
 
+    logInfo('match_confirm_completed', { requestId: req.requestId, scoutInterestId: match.id });
     return res.json({
       businessName: match.business_name,
       confirmed: true,
     });
   } catch (err) {
-    console.error('Confirm match error:', err);
+    logError('match_confirm_failed', { requestId: req.requestId, tokenPrefix: token.slice(0, 8), error: err });
     return res.status(500).json({ error: err.message || 'Failed to confirm match' });
   }
 });
@@ -493,13 +580,15 @@ app.get('/api/admin/funnel', async (req, res) => {
   const providedToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
 
   if (!adminToken || !providedToken || providedToken !== adminToken) {
+    logWarn('admin_funnel_unauthorized', { requestId: req.requestId });
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
   try {
+    logInfo('admin_funnel_requested', { requestId: req.requestId });
     return res.json(await getFunnelStats());
   } catch (err) {
-    console.error('Get funnel stats error:', err);
+    logError('admin_funnel_failed', { requestId: req.requestId, error: err });
     return res.status(500).json({ error: err.message || 'Failed to load funnel stats' });
   }
 });
@@ -508,6 +597,7 @@ app.get('/api/scout-runs/:runId/events', (req, res) => {
   const ip = getClientIp(req);
   const currentConnections = sseConnections.get(ip);
   if (currentConnections && currentConnections.size >= MAX_SSE_CONNECTIONS_PER_IP) {
+    logWarn('sse_connection_rejected', { requestId: req.requestId, runId: req.params.runId, reason: 'too_many_connections', ip });
     return res.status(429).json({
       error: `Too many open scout event streams from this IP. SSE connections are limited to ${MAX_SSE_CONNECTIONS_PER_IP} concurrent connections.`,
     });
@@ -532,6 +622,7 @@ app.get('/api/scout-runs/:runId/events', (req, res) => {
     if (!res.writableEnded) {
       res.end();
     }
+    logInfo('sse_connection_closed', { requestId: req.requestId, runId: req.params.runId, ip });
   };
   const send = ({ type, payload }) => {
     if (cleanedUp || res.writableEnded) return;
@@ -558,6 +649,7 @@ app.get('/api/scout-runs/:runId/events', (req, res) => {
     cleanup();
   }, SSE_CONNECTION_TTL_MS);
   trackSseConnection(ip, connection);
+  logInfo('sse_connection_opened', { requestId: req.requestId, runId: req.params.runId, ip });
 
   req.on('close', () => {
     cleanup();
@@ -573,11 +665,11 @@ migrate()
     try {
       await cleanupStaleScoutRuns();
     } catch (err) {
-      console.error('Startup scout cleanup error:', getErrorMessage(err));
+      logError('startup_scout_cleanup_failed', { error: err });
     }
-    app.listen(PORT, () => console.log(`🗺️  jobmap server running on http://localhost:${PORT}`));
+    app.listen(PORT, () => logInfo('server_started', { port: PORT }));
   })
   .catch(err => {
-    console.error('Database migration failed:', getErrorMessage(err));
+    logError('database_migration_failed', { error: err });
     process.exit(1);
   });

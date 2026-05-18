@@ -1,5 +1,6 @@
 import nodemailer from 'nodemailer';
 import { query } from './db.js';
+import { logError, logInfo, logWarn } from './logger.js';
 
 const QUALIFIED_SUBJECT = "Someone qualified is asking if you're hiring";
 
@@ -89,7 +90,7 @@ ${getBaseUrl()}/for-businesses
 export async function sendBusinessNotifications(runId) {
   const smtpConfig = getSmtpConfig();
   if (!smtpConfig) {
-    console.warn(`[notifier] SMTP not configured; skipping run ${runId}`);
+    logWarn('interest_notifications_skipped', { runId, reason: 'smtp_not_configured' });
     return;
   }
 
@@ -103,9 +104,13 @@ export async function sendBusinessNotifications(runId) {
     [runId]
   );
 
-  if (result.rowCount === 0) return;
+  if (result.rowCount === 0) {
+    logInfo('interest_notifications_empty', { runId });
+    return;
+  }
 
   const smtp = getTransporter(smtpConfig);
+  logInfo('interest_notifications_started', { runId, count: result.rowCount });
 
   for (const row of result.rows) {
     const matchUrl = `${getBaseUrl()}/match/${encodeURIComponent(row.match_token)}`;
@@ -126,6 +131,12 @@ export async function sendBusinessNotifications(runId) {
          WHERE id = $1`,
         [row.id]
       );
+      logInfo('interest_business_notification_sent', {
+        runId,
+        scoutInterestId: row.id,
+        businessName: row.business_name,
+        fitScore: row.fit_score,
+      });
 
       try {
         await smtp.sendMail({
@@ -141,11 +152,12 @@ ${confirmUrl}
 
 - Hirenear`,
         });
+        logInfo('interest_seeker_followup_sent', { runId, scoutInterestId: row.id });
       } catch (err) {
-        console.error(`[notifier] Failed to send seeker follow-up for scout_interest ${row.id}:`, err.message);
+        logError('interest_seeker_followup_failed', { runId, scoutInterestId: row.id, error: err });
       }
     } catch (err) {
-      console.error(`[notifier] Failed to send notification for scout_interest ${row.id}:`, err.message);
+      logError('interest_business_notification_failed', { runId, scoutInterestId: row.id, error: err });
     }
   }
 }
@@ -156,22 +168,44 @@ export async function notifyBusinessIfQualified(business) {
     if (!businessId) return;
 
     const fitScore = readFitScore(business);
-    if (!Number.isFinite(fitScore) || fitScore < 80) return;
+    if (!Number.isFinite(fitScore) || fitScore < 80) {
+      logInfo('qualified_business_notification_skipped', { businessId, reason: 'fit_score_below_threshold', fitScore });
+      return;
+    }
 
     const contactEmail = business.contactEmail || business.contact_email;
-    if (!contactEmail) return;
+    if (!contactEmail) {
+      logInfo('qualified_business_notification_skipped', { businessId, reason: 'missing_contact_email', fitScore });
+      return;
+    }
 
     const existing = await query(
       'SELECT id, name, fit_score, contact_email, notified_at, match_summary, match_signals FROM scout_businesses WHERE id = $1',
       [businessId]
     );
     const row = existing.rows[0];
-    if (!row || row.notified_at) return;
-    if (row.fit_score === null || row.fit_score === undefined || readFitScore(row) < 80) return;
-    if (!row.contact_email) return;
+    if (!row) {
+      logWarn('qualified_business_notification_skipped', { businessId, reason: 'business_not_found' });
+      return;
+    }
+    if (row.notified_at) {
+      logInfo('qualified_business_notification_skipped', { businessId, reason: 'already_notified' });
+      return;
+    }
+    if (row.fit_score === null || row.fit_score === undefined || readFitScore(row) < 80) {
+      logInfo('qualified_business_notification_skipped', { businessId, reason: 'stored_fit_score_below_threshold', fitScore: readFitScore(row) });
+      return;
+    }
+    if (!row.contact_email) {
+      logInfo('qualified_business_notification_skipped', { businessId, reason: 'stored_contact_email_missing' });
+      return;
+    }
 
     const smtpConfig = getSmtpConfig();
-    if (!smtpConfig) return;
+    if (!smtpConfig) {
+      logWarn('qualified_business_notification_skipped', { businessId, reason: 'smtp_not_configured' });
+      return;
+    }
 
     const signals = Array.isArray(row.match_signals)
       ? row.match_signals
@@ -197,7 +231,14 @@ export async function notifyBusinessIfQualified(business) {
        WHERE id = $1 AND notified_at IS NULL`,
       [businessId]
     );
+    logInfo('qualified_business_notification_sent', {
+      businessId,
+      businessName: row.name,
+      fitScore: row.fit_score,
+      signalCount: signals.length,
+      hasSummary,
+    });
   } catch (err) {
-    console.error('[notifyBusinessIfQualified] failed:', err);
+    logError('qualified_business_notification_failed', { businessId: business?.id, error: err });
   }
 }

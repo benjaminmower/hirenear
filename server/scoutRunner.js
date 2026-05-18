@@ -6,6 +6,7 @@ import { query } from './db.js';
 import { closeRunInspectionSessions, inspectWebsite, normalizeDomain } from './websiteInspector.js';
 import { matchScoutRunBatch, extractResumeSignals } from './resumeMatcher.js';
 import { notifyBusinessIfQualified } from './notifier.js';
+import { logError, logInfo, logWarn } from './logger.js';
 
 const events = new Map();
 const CONCURRENCY = Number(process.env.SCOUT_INSPECTION_CONCURRENCY || 2);
@@ -78,11 +79,27 @@ export async function createScoutRun({ resumeText, lat, lng, radius, locationLab
   const runId = randomUUID();
   let extractedSignals = null;
   const resolvedLocationLabel = await resolveLocationLabel(lat, lng, locationLabel);
+  logInfo('scout_run_persist_started', {
+    runId,
+    lat,
+    lng,
+    radius,
+    locationLabel: resolvedLocationLabel,
+    targetLanes,
+    avoidTermsPresent: Boolean(avoidTerms),
+  });
 
   try {
     extractedSignals = await extractResumeSignals(resumeText, targetLanes);
+    logInfo('resume_signal_extraction_completed', {
+      runId,
+      jobSearchTitleCount: extractedSignals?.jobSearchTitles?.length || 0,
+      employerSearchQueryCount: extractedSignals?.employerSearchQueries?.length || 0,
+      preferredIndustryCount: extractedSignals?.preferredIndustries?.length || 0,
+      negativeBusinessTypeCount: extractedSignals?.negativeBusinessTypes?.length || 0,
+    });
   } catch (err) {
-    console.error('[createScoutRun] extraction failed:', getErrorMessage(err));
+    logError('resume_signal_extraction_failed', { runId, error: err });
   }
 
   await query(
@@ -100,6 +117,7 @@ export async function createScoutRun({ resumeText, lat, lng, radius, locationLab
       extractedSignals ? JSON.stringify(extractedSignals) : null,
     ]
   );
+  logInfo('scout_run_persist_completed', { runId });
   return runId;
 }
 
@@ -160,6 +178,7 @@ export async function cleanupStaleScoutRuns() {
 
   const runIds = result.rows.map(row => row.id);
   if (runIds.length === 0) return 0;
+  logWarn('stale_scout_runs_marked_failed', { count: runIds.length, runIds });
 
   await query(
     `UPDATE scout_businesses
@@ -214,6 +233,16 @@ async function saveInspection(cacheKey, placeId, website, inspection) {
       inspection.error || null,
     ]
   );
+  logInfo('business_inspection_cached', {
+    cacheKey,
+    placeId,
+    websitePresent: Boolean(website),
+    status: inspection.status,
+    signalStrength: inspection.signalStrength,
+    opportunityCount: inspection.opportunities?.length || 0,
+    evidenceCount: inspection.evidence?.length || 0,
+    contactEmailFound: Boolean(inspection.contactEmail),
+  });
 }
 
 async function insertOpportunity(runId, businessId, opportunity) {
@@ -235,6 +264,14 @@ async function insertOpportunity(runId, businessId, opportunity) {
       opportunity.signalStrength || 'weak',
     ]
   );
+  logInfo('opportunity_inserted', {
+    runId,
+    businessId,
+    source: opportunity.source || 'website',
+    kind: opportunity.kind || 'opening',
+    signalStrength: opportunity.signalStrength || 'weak',
+    hasUrl: Boolean(opportunity.url),
+  });
   return result.rows[0];
 }
 
@@ -299,6 +336,14 @@ async function searchFallbackOpportunities(business, cache, run) {
 }
 
 async function inspectBusiness({ run, business, cache }) {
+  const startedAt = Date.now();
+  logInfo('business_inspection_started', {
+    runId: run.id,
+    businessId: business.id,
+    placeId: business.place_id,
+    businessName: business.name,
+    websitePresent: Boolean(business.website),
+  });
   emitRun(run.id, 'business_update', { business: { ...businessRowToClient(business), inspectionStatus: 'checking' } });
   await query(
     `UPDATE scout_businesses SET inspection_status = 'checking', updated_at = now() WHERE id = $1`,
@@ -310,6 +355,7 @@ async function inspectBusiness({ run, business, cache }) {
   let inspection;
   const cached = await getFreshInspection(cacheKey);
   if (cached) {
+    logInfo('business_inspection_cache_hit', { runId: run.id, businessId: business.id, cacheKey });
     inspection = {
       status: cached.status,
       signalStrength: cached.signal_strength,
@@ -320,6 +366,7 @@ async function inspectBusiness({ run, business, cache }) {
       error: cached.error,
     };
   } else {
+    logInfo('business_inspection_cache_miss', { runId: run.id, businessId: business.id, cacheKey });
     inspection = await inspectWebsite(business.website, { runId: run.id });
     await saveInspection(cacheKey, business.place_id, business.website, inspection);
   }
@@ -327,6 +374,11 @@ async function inspectBusiness({ run, business, cache }) {
   let opportunities = [...(inspection.opportunities || [])];
   if (inspection.signalStrength !== 'strong') {
     const fallback = await searchFallbackOpportunities(business, cache, run);
+    logInfo('business_fallback_search_completed', {
+      runId: run.id,
+      businessId: business.id,
+      fallbackOpportunityCount: fallback.length,
+    });
     opportunities = opportunities.concat(fallback);
     if (fallback.length > 0 && inspection.signalStrength !== 'strong') {
       inspection.signalStrength = 'strong';
@@ -355,10 +407,27 @@ async function inspectBusiness({ run, business, cache }) {
   );
 
   const updatedBusiness = await query('SELECT * FROM scout_businesses WHERE id = $1', [business.id]);
+  logInfo('business_inspection_completed', {
+    runId: run.id,
+    businessId: business.id,
+    placeId: business.place_id,
+    status: inspection.status,
+    signalStrength: inspection.signalStrength,
+    opportunityCount: opportunities.length,
+    evidenceCount: inspection.evidence?.length || 0,
+    contactEmailFound: Boolean(inspection.contactEmail),
+    durationMs: Date.now() - startedAt,
+  });
   emitRun(run.id, 'business_update', { business: businessRowToClient(updatedBusiness.rows[0]) });
 }
 
 async function applyBatchMatches(run, businesses, opportunities) {
+  const startedAt = Date.now();
+  logInfo('batch_match_started', {
+    runId: run.id,
+    businessCount: businesses.length,
+    opportunityCount: opportunities.length,
+  });
   const batch = await matchScoutRunBatch({
     resumeText: run.resume_text,
     targetLanes: run.target_lanes || [],
@@ -392,10 +461,20 @@ async function applyBatchMatches(run, businesses, opportunities) {
     const updatedBusiness = await query('SELECT * FROM scout_businesses WHERE id = $1', [match.businessId]);
     const updatedBusinessRow = updatedBusiness.rows[0];
     if (!updatedBusinessRow) {
-      console.warn(`[applyBatchMatches] missing business row for id ${match.businessId}`);
+      logWarn('batch_match_missing_business_row', { runId: run.id, businessId: match.businessId });
       continue;
     }
-    notifyBusinessIfQualified(updatedBusinessRow);
+    notifyBusinessIfQualified(updatedBusinessRow).catch(err => {
+      logError('qualified_business_notification_unhandled', { runId: run.id, businessId: match.businessId, error: err });
+    });
+    logInfo('business_match_applied', {
+      runId: run.id,
+      businessId: match.businessId,
+      fitScore: match.fitScore,
+      matchLevel: match.matchLevel,
+      signalCount: match.matchSignals?.length || 0,
+      hasSummary: Boolean(match.matchSummary),
+    });
     emitRun(run.id, 'business_update', { business: businessRowToClient(updatedBusinessRow) });
     emitRun(run.id, 'match_update', { match: matchRowToClient(row) });
   }
@@ -411,15 +490,26 @@ async function applyBatchMatches(run, businesses, opportunities) {
     emitRun(run.id, 'match_update', { match: matchRowToClient(row) });
   }
 
+  logInfo('batch_match_completed', {
+    runId: run.id,
+    businessMatchCount: batch.businessMatches.length,
+    opportunityMatchCount: batch.opportunityMatches.length,
+    durationMs: Date.now() - startedAt,
+  });
   return batch.summary;
 }
 
 // Phase 1: discover resume-matched businesses and queue them. Website inspection is still user-driven.
 export async function runScout(runId, cache) {
+  const startedAt = Date.now();
   try {
+    logInfo('scout_discovery_started', { runId });
     const runResult = await query('SELECT * FROM scout_runs WHERE id = $1', [runId]);
     const run = runResult.rows[0];
-    if (!run) return;
+    if (!run) {
+      logWarn('scout_discovery_aborted', { runId, reason: 'run_not_found' });
+      return;
+    }
 
     await query(`UPDATE scout_runs SET status = 'running', updated_at = now() WHERE id = $1`, [runId]);
     const locationLabel = await resolveLocationLabel(run.lat, run.lng, run.location_label);
@@ -436,6 +526,7 @@ export async function runScout(runId, cache) {
       signals: run.extracted_signals || {},
       cache,
     });
+    logInfo('scout_discovery_places_found', { runId, count: places.length, locationLabel });
 
     for (const place of places) {
       const id = randomUUID();
@@ -483,8 +574,9 @@ export async function runScout(runId, cache) {
       emitRun(runId, 'business_queued', { business: businessRowToClient(business) });
     }
     // Businesses are now queued; the user drives website inspection via visitBusiness().
+    logInfo('scout_discovery_completed', { runId, queuedBusinessCount: places.length, durationMs: Date.now() - startedAt });
   } catch (err) {
-    console.error('Scout run error:', getErrorMessage(err));
+    logError('scout_discovery_failed', { runId, durationMs: Date.now() - startedAt, error: err });
     await closeRunInspectionSessions(runId).catch(() => {});
     await query(
       `UPDATE scout_runs SET status = 'failed', error = $2, updated_at = now() WHERE id = $1`,
@@ -496,17 +588,25 @@ export async function runScout(runId, cache) {
 
 // Phase 2a: user clicked Visit — inspect this business then match resume
 export async function visitBusiness(runId, placeId, cache) {
+  const startedAt = Date.now();
   try {
+    logInfo('business_visit_started', { runId, placeId });
     const runResult = await query('SELECT * FROM scout_runs WHERE id = $1', [runId]);
     const run = runResult.rows[0];
-    if (!run) return;
+    if (!run) {
+      logWarn('business_visit_aborted', { runId, placeId, reason: 'run_not_found' });
+      return;
+    }
 
     const bizResult = await query(
       'SELECT * FROM scout_businesses WHERE run_id = $1 AND place_id = $2',
       [runId, placeId]
     );
     const business = bizResult.rows[0];
-    if (!business) return;
+    if (!business) {
+      logWarn('business_visit_aborted', { runId, placeId, reason: 'business_not_found' });
+      return;
+    }
 
     await inspectBusiness({ run, business, cache });
 
@@ -516,18 +616,20 @@ export async function visitBusiness(runId, placeId, cache) {
       query('SELECT * FROM scout_opportunities WHERE business_id = $1', [business.id]),
     ]);
 
-    const batch = await applyBatchMatches(run, updatedBiz.rows, allOpportunities.rows);
+    await applyBatchMatches(run, updatedBiz.rows, allOpportunities.rows);
 
     // Check if all visited businesses are done, emit complete if so
     await maybeComplete(run);
+    logInfo('business_visit_completed', { runId, placeId, businessId: business.id, durationMs: Date.now() - startedAt });
   } catch (err) {
-    console.error('visitBusiness error:', getErrorMessage(err));
+    logError('business_visit_failed', { runId, placeId, durationMs: Date.now() - startedAt, error: err });
   }
 }
 
 // Phase 2b: user clicked Skip — mark skipped, no inspection
 export async function skipBusiness(runId, placeId) {
   try {
+    logInfo('business_skip_started', { runId, placeId });
     await query(
       `UPDATE scout_businesses SET inspection_status = 'skipped', signal_strength = 'none', updated_at = now()
        WHERE run_id = $1 AND place_id = $2`,
@@ -539,12 +641,15 @@ export async function skipBusiness(runId, placeId) {
     );
     if (bizResult.rows[0]) {
       emitRun(runId, 'business_update', { business: businessRowToClient(bizResult.rows[0]) });
+      logInfo('business_skip_completed', { runId, placeId, businessId: bizResult.rows[0].id });
+    } else {
+      logWarn('business_skip_missing_business', { runId, placeId });
     }
     // Check if all businesses are now decided
     const runResult = await query('SELECT * FROM scout_runs WHERE id = $1', [runId]);
     await maybeComplete(runResult.rows[0]);
   } catch (err) {
-    console.error('skipBusiness error:', getErrorMessage(err));
+    logError('business_skip_failed', { runId, placeId, error: err });
   }
 }
 
@@ -554,7 +659,9 @@ async function maybeComplete(run) {
     `SELECT COUNT(*) FROM scout_businesses WHERE run_id = $1 AND inspection_status = 'queued'`,
     [run.id]
   );
-  if (Number(remaining.rows[0].count) > 0) return;
+  const remainingCount = Number(remaining.rows[0].count);
+  logInfo('scout_completion_checked', { runId: run.id, remainingQueuedBusinesses: remainingCount });
+  if (remainingCount > 0) return;
 
   const [finalBusinesses, finalOpportunities] = await Promise.all([
     query(`SELECT * FROM scout_businesses WHERE run_id = $1 AND inspection_status != 'skipped'`, [run.id]),
@@ -569,5 +676,11 @@ async function maybeComplete(run) {
     `UPDATE scout_runs SET status = 'complete', summary = $2, completed_at = now(), updated_at = now() WHERE id = $1`,
     [run.id, summary]
   );
+  logInfo('scout_completed', {
+    runId: run.id,
+    visitedBusinessCount: finalBusinesses.rows.length,
+    opportunityCount: finalOpportunities.rows.length,
+    summaryLength: summary.length,
+  });
   emitRun(run.id, 'complete', { summary });
 }

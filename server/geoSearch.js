@@ -1,4 +1,5 @@
 import { clampScoutRadius, DEFAULT_SCOUT_RADIUS_METERS, getErrorMessage, MIN_SCOUT_RADIUS_METERS } from './limits.js';
+import { logError, logInfo, logWarn } from './logger.js';
 
 const EXCLUDED_PLACE_TYPES = new Set([
   'atm',
@@ -166,7 +167,7 @@ export function filterAndRankPlaces(places, limit = MAX_PLACES_TO_SHOW) {
 
 export async function searchJobsForCompany(companyName, cache, locationLabel = 'Salt Lake City, UT', targetLanes = [], avoidTerms = '', options = {}) {
   if (!process.env.SEARCH_API_KEY) {
-    console.warn('[searchJobsForCompany] SEARCH_API_KEY is not configured');
+    logWarn('company_job_search_skipped', { companyName, reason: 'search_api_not_configured' });
     return null;
   }
 
@@ -176,7 +177,8 @@ export async function searchJobsForCompany(companyName, cache, locationLabel = '
   const cacheKey = `jobs:company:v4:${normalizedName}:${locationLabel}:${targetLanes.join('|')}:${avoidTerms}`;
   const cached = cache.get(cacheKey);
   if (cached) {
-    console.log(`[${companyName}] SearchAPI jobs:`, {
+    logInfo('company_job_search_completed', {
+      companyName,
       location: locationLabel,
       count: cached.length,
       fromCache: true,
@@ -197,12 +199,18 @@ export async function searchJobsForCompany(companyName, cache, locationLabel = '
   const data = await response.json();
 
   if (!response.ok || data.error) {
-    console.error(`[${companyName}] SearchAPI company job error:`, getErrorMessage(data.error || response.status));
+    logError('company_job_search_failed', {
+      companyName,
+      location: locationLabel,
+      status: response.status,
+      error: new Error(getErrorMessage(data.error || response.status)),
+    });
     return null;
   }
 
   const rawJobs = data.jobs || data.jobs_results || [];
-  console.log(`[${companyName}] SearchAPI jobs:`, {
+  logInfo('company_job_search_completed', {
+    companyName,
     location: locationLabel,
     count: rawJobs.length,
     fromCache: false,
@@ -266,13 +274,18 @@ async function searchJobsByTitle({ title, locationLabel, cache }) {
   const response = await fetch(`https://www.searchapi.io/api/v1/search?${params}`);
   const data = await response.json();
   if (!response.ok || data.error) {
-    console.error('[Scout job discovery] SearchAPI title job error:', getErrorMessage(data.error || response.status));
+    logError('title_job_search_failed', {
+      title: cleanTitle,
+      location: locationLabel,
+      status: response.status,
+      error: new Error(getErrorMessage(data.error || response.status)),
+    });
     return [];
   }
 
   const jobs = (data.jobs || data.jobs_results || []).map(job => mapSearchApiJob(job, job.company_name));
   cache?.set(cacheKey, jobs);
-  console.log('[Scout job discovery] SearchAPI jobs:', { location: locationLabel, count: jobs.length });
+  logInfo('title_job_search_completed', { title: cleanTitle, location: locationLabel, count: jobs.length });
   return jobs;
 }
 
@@ -385,7 +398,7 @@ export async function discoverResumeMatchedPlaces({ lat, lng, radius, locationLa
     try {
       jobs = await searchJobsByTitle({ title, locationLabel, cache });
     } catch (err) {
-      console.error('[Scout job discovery] failed:', getErrorMessage(err));
+      logError('scout_job_discovery_failed', { title, location: locationLabel, error: err });
       continue;
     }
     for (const job of jobs.slice(0, 10)) {
@@ -407,7 +420,7 @@ export async function discoverResumeMatchedPlaces({ lat, lng, radius, locationLa
     try {
       places = filterAndRankPlaces(await fetchPlacesTextSearch({ query: placeQuery, lat, lng, radius: safeRadius }), 10);
     } catch (err) {
-      console.error('[Scout employer discovery] failed:', getErrorMessage(err));
+      logError('scout_employer_discovery_failed', { query: placeQuery, location: locationLabel, error: err });
       continue;
     }
     for (const place of places) {
@@ -425,7 +438,7 @@ export async function discoverResumeMatchedPlaces({ lat, lng, radius, locationLa
     try {
       nearby = filterAndRankPlaces(await fetchNearbyPlaces(lat, lng, safeRadius));
     } catch (err) {
-      console.error('[Scout nearby backfill] failed:', getErrorMessage(err));
+      logError('scout_nearby_backfill_failed', { location: locationLabel, radius: safeRadius, error: err });
     }
     for (const place of nearby) {
       const demotion = isNegativeBusiness(place, negativeBusinessTypes) ? 120 : 0;
@@ -457,7 +470,7 @@ export async function discoverResumeMatchedPlaces({ lat, lng, radius, locationLa
     })
     .slice(0, MAX_PLACES_TO_SHOW);
 
-  console.log('[Scout discovery] candidates:', {
+  logInfo('scout_discovery_candidates_ranked', {
     location: locationLabel,
     counts: {
       jobSearch: jobCandidateCount,
@@ -545,7 +558,7 @@ export function createNearbyJobsHandler({ cache, mapboxToken }) {
       cache.set(cacheKey, payload);
       res.json({ ...payload, fromCache: false });
     } catch (err) {
-      console.error('Nearby jobs error:', getErrorMessage(err));
+      logError('nearby_jobs_failed', { lat, lng, radius, locationLabel, error: err });
       res.status(500).json({ error: getErrorMessage(err) || 'Failed to fetch nearby jobs' });
     }
   };

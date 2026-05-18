@@ -2,6 +2,7 @@ import { lookup } from 'dns/promises';
 import { isIP } from 'net';
 import { chromium } from 'playwright';
 import { getErrorMessage } from './limits.js';
+import { logError, logInfo, logWarn } from './logger.js';
 
 const LIKELY_PATHS = ['/careers', '/jobs', '/employment', '/join-us', '/work-with-us', '/apply', '/contact'];
 const STRONG_PATTERNS = [
@@ -70,6 +71,7 @@ export async function closeRunInspectionSessions(runId) {
   if (!contexts || contexts.size === 0) return 0;
   const active = [...contexts];
   activeInspectionContexts.delete(runId);
+  logWarn('inspection_contexts_closed', { runId, count: active.length });
   await Promise.all(active.map(async context => {
     try {
       await context.close();
@@ -364,6 +366,7 @@ function firstMailtoEmail(hrefs) {
 export async function inspectWebsite(website, { maxPages = 5, timeoutMs = PAGE_VISIT_TIMEOUT_MS, runId } = {}) {
   const domain = normalizeDomain(website);
   if (!website || !domain) {
+    logWarn('website_inspection_rejected', { runId, reason: 'missing_or_invalid_website' });
     return {
       status: 'failed',
       signalStrength: 'failed',
@@ -375,6 +378,7 @@ export async function inspectWebsite(website, { maxPages = 5, timeoutMs = PAGE_V
   }
 
   const start = Date.now();
+  logInfo('website_inspection_started', { runId, domain, maxPages, timeoutMs });
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ userAgent: USER_AGENT });
   const unregisterContext = registerInspectionContext(runId, context);
@@ -411,6 +415,7 @@ export async function inspectWebsite(website, { maxPages = 5, timeoutMs = PAGE_V
 
       try {
         if (!(await isAllowedByRobots(url))) {
+          logInfo('website_page_skipped_by_robots', { runId, domain, url });
           evidence.push({ url, label: 'Skipped by robots.txt', snippet: 'robots.txt disallows this path' });
           continue;
         }
@@ -420,8 +425,18 @@ export async function inspectWebsite(website, { maxPages = 5, timeoutMs = PAGE_V
         );
         if (!contactEmail) {
           contactEmail = firstMailtoEmail(mailtoLinks) || firstValidEmail(text);
+          if (contactEmail) {
+            logInfo('website_contact_email_found', { runId, domain, sourceUrl: url });
+          }
         }
         const classification = classifyPage({ url, title, text });
+        logInfo('website_page_classified', {
+          runId,
+          domain,
+          url,
+          signalStrength: classification.signalStrength,
+          hasOpportunity: Boolean(classification.opportunity),
+        });
 
         if (classification.evidence) evidence.push(classification.evidence);
         if (classification.opportunity && !opportunities.some(item => item.url === classification.opportunity.url && item.kind === classification.opportunity.kind)) {
@@ -448,10 +463,21 @@ export async function inspectWebsite(website, { maxPages = 5, timeoutMs = PAGE_V
         if (String(err?.message || '').includes('timed out after')) {
           throw err;
         }
+        logWarn('website_page_check_failed', { runId, domain, url, error: getErrorMessage(err) });
         evidence.push({ url, label: 'Page check failed', snippet: err.message });
       }
     }
 
+    logInfo('website_inspection_completed', {
+      runId,
+      domain,
+      signalStrength: bestSignal,
+      opportunityCount: opportunities.length,
+      evidenceCount: evidence.length,
+      inspectedPages: seen.size,
+      contactEmailFound: Boolean(contactEmail),
+      durationMs: Date.now() - start,
+    });
     return {
       status: 'complete',
       signalStrength: bestSignal,
@@ -462,6 +488,7 @@ export async function inspectWebsite(website, { maxPages = 5, timeoutMs = PAGE_V
       inspectedPages: seen.size,
     };
   } catch (err) {
+    logError('website_inspection_failed', { runId, domain, durationMs: Date.now() - start, error: err });
     return {
       status: 'failed',
       signalStrength: 'failed',

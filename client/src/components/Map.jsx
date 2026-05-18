@@ -487,16 +487,6 @@ export default function Map({
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
-      {mode === 'scout' && (
-        <div style={{ ...styles.legend, ...(isMobile ? styles.legendMobile : {}) }}>
-          {SCOUT_LEGEND.map(item => (
-            <div key={item.label} style={styles.legendItem}>
-              <span style={{ ...styles.legendDot, background: item.color }} />
-              <span>{item.label}</span>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }

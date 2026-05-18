@@ -1,7 +1,6 @@
 import { Suspense, lazy, useRef, useState } from 'react';
 import ForBusinessesPage from './components/ForBusinessesPage.jsx';
 import PrivacyPage from './components/PrivacyPage.jsx';
-import SearchPanel from './components/SearchPanel.jsx';
 import { MatchConfirmPage, MatchPage } from './components/MatchPages.jsx';
 import ScoutPanel from './components/ScoutPanel.jsx';
 import TermsPage from './components/TermsPage.jsx';
@@ -141,11 +140,6 @@ function ScoutApp() {
             <span style={styles.logoTagline}>Recruiting intelligence</span>
           </span>
         </div>
-        <SearchPanel
-          searchPin={searchPin}
-          locationLabel={searchLocationLabel}
-          scoutStats={scoutStats}
-        />
       </header>
 
       {/* Body */}

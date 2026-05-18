@@ -117,12 +117,56 @@ export default function Map({
   const modeRef = useRef(mode);
   const onPinDropRef = useRef(onPinDrop);
   const onScoutOpenRef = useRef(onScoutOpen);
+  const debounceTimerRef = useRef(null);
   const [mapReady, setMapReady] = useState(false);
   const [pinScreenPos, setPinScreenPos] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchSuggestions, setSearchSuggestions] = useState([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
 
   useEffect(() => { modeRef.current = mode; }, [mode]);
   useEffect(() => { onPinDropRef.current = onPinDrop; }, [onPinDrop]);
   useEffect(() => { onScoutOpenRef.current = onScoutOpen; }, [onScoutOpen]);
+
+  // Search city with debounce
+  useEffect(() => {
+    if (!searchQuery.trim()) {
+      setSearchSuggestions([]);
+      setShowSuggestions(false);
+      return;
+    }
+
+    const handleSearch = async () => {
+      const mapboxToken = window.HIRENEAR_CONFIG?.mapboxToken || import.meta.env.VITE_MAPBOX_TOKEN;
+      if (!mapboxToken) return;
+
+      const params = new URLSearchParams({
+        access_token: mapboxToken,
+        types: 'place,locality,district,region',
+        limit: '5',
+      });
+
+      try {
+        const res = await fetch(`https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(searchQuery)}.json?${params}`);
+        const data = await res.json();
+        if (data.features) {
+          setSearchSuggestions(data.features.map(f => ({
+            id: f.id,
+            place_name: f.place_name,
+            center: f.center,
+          })));
+          setShowSuggestions(true);
+        }
+      } catch (err) {
+        console.error('Geocoding error:', err);
+      }
+    };
+
+    clearTimeout(debounceTimerRef.current);
+    debounceTimerRef.current = setTimeout(handleSearch, 300);
+
+    return () => clearTimeout(debounceTimerRef.current);
+  }, [searchQuery]);
 
   // Init map
   useEffect(() => {
@@ -530,6 +574,100 @@ export default function Map({
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+
+      {/* City search bar */}
+      <div style={{
+        position: 'absolute',
+        top: 14,
+        left: 14,
+        right: isMobile ? 14 : 'auto',
+        zIndex: 40,
+        width: isMobile ? 'auto' : 280,
+      }}>
+        <input
+          type="text"
+          placeholder="Search for a city..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          onFocus={() => searchQuery.trim() && setShowSuggestions(true)}
+          style={{
+            width: '100%',
+            padding: '10px 12px',
+            fontSize: 13,
+            fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+            border: '1px solid rgba(255, 255, 255, 0.2)',
+            borderRadius: 6,
+            background: 'rgba(24, 32, 51, 0.92)',
+            color: '#ffffff',
+            backdropFilter: 'blur(4px)',
+          }}
+        />
+
+        {/* Status text below input */}
+        <div style={{
+          fontSize: 11,
+          color: '#a8b2c1',
+          marginTop: 6,
+          textAlign: 'left',
+          fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+          fontWeight: 500,
+          minHeight: 16,
+        }}>
+          {searchPin ? `Looking near ${locationLabel}` : 'Drop a pin to select the area you want to look for work'}
+        </div>
+
+        {/* Suggestions dropdown */}
+        {showSuggestions && searchSuggestions.length > 0 && (
+          <div style={{
+            position: 'absolute',
+            top: '100%',
+            left: 0,
+            right: 0,
+            marginTop: 4,
+            background: 'rgba(24, 32, 51, 0.95)',
+            border: '1px solid rgba(255, 255, 255, 0.1)',
+            borderRadius: 6,
+            maxHeight: 200,
+            overflowY: 'auto',
+            zIndex: 50,
+          }}>
+            {searchSuggestions.map((suggestion) => (
+              <button
+                key={suggestion.id}
+                onClick={() => {
+                  const map = mapRef.current;
+                  if (map) {
+                    map.flyTo({
+                      center: suggestion.center,
+                      zoom: 12,
+                      duration: 1000,
+                    });
+                    onPinDropRef.current?.(suggestion.center[1], suggestion.center[0]);
+                  }
+                  setSearchQuery('');
+                  setShowSuggestions(false);
+                }}
+                style={{
+                  width: '100%',
+                  padding: '10px 12px',
+                  background: 'transparent',
+                  border: 'none',
+                  borderBottom: '1px solid rgba(255, 255, 255, 0.05)',
+                  color: '#e8eaf0',
+                  textAlign: 'left',
+                  fontSize: 13,
+                  cursor: 'pointer',
+                  fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                }}
+                onMouseEnter={(e) => e.target.style.background = 'rgba(255, 255, 255, 0.08)'}
+                onMouseLeave={(e) => e.target.style.background = 'transparent'}
+              >
+                {suggestion.place_name}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* Anchored CTA near dropped pin */}
       {searchPin && pinScreenPos && (

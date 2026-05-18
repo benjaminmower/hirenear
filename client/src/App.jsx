@@ -2,6 +2,7 @@ import { Suspense, lazy, useState } from 'react';
 import SearchPanel from './components/SearchPanel.jsx';
 import { MatchConfirmPage, MatchPage } from './components/MatchPages.jsx';
 import ScoutPanel from './components/ScoutPanel.jsx';
+import { useMediaQuery } from './hooks/useMediaQuery.js';
 import { useScout } from './hooks/useScout.js';
 
 const Map = lazy(() => import('./components/Map.jsx'));
@@ -34,6 +35,7 @@ export default function App() {
 }
 
 function ScoutApp() {
+  const isMobile = useMediaQuery('(max-width: 700px)');
   const [selectedJob, setSelectedJob] = useState(null);
   const [selectedBusiness, setSelectedBusiness] = useState(null);
   const [geoRadius, setGeoRadius] = useState(1000);
@@ -60,8 +62,8 @@ function ScoutApp() {
   return (
     <div style={styles.app}>
       {/* Header */}
-      <header style={styles.header}>
-        <div style={styles.logo}>
+      <header style={{ ...styles.header, ...(isMobile ? styles.headerMobile : {}) }}>
+        <div style={{ ...styles.logo, ...(isMobile ? styles.logoMobile : {}) }}>
           <span style={styles.logoMark} />
           <span style={styles.logoStack}>
             <span style={styles.logoText}>Hire Near</span>
@@ -95,7 +97,7 @@ function ScoutApp() {
 
           {/* Scout trigger button */}
           <button
-            style={styles.scoutTrigger}
+            style={{ ...styles.scoutTrigger, ...(isMobile ? styles.scoutTriggerMobile : {}) }}
             onClick={() => setScoutOpen(true)}
           >
             {scout.run?.id ? 'View scout run' : 'Scout this area'}
@@ -148,12 +150,23 @@ const styles = {
     boxShadow: '0 8px 22px rgba(24, 32, 51, 0.06)',
     zIndex: 2,
   },
+  headerMobile: {
+    minHeight: 82,
+    alignItems: 'flex-start',
+    flexDirection: 'column',
+    justifyContent: 'center',
+    padding: '12px 14px',
+    gap: 8,
+  },
   logo: {
     display: 'flex',
     alignItems: 'center',
     gap: 11,
     flexShrink: 0,
     minWidth: 188,
+  },
+  logoMobile: {
+    minWidth: 0,
   },
   logoMark: {
     width: 22,
@@ -207,6 +220,14 @@ const styles = {
     cursor: 'pointer',
     boxShadow: '0 8px 24px rgba(24, 32, 51, 0.2)',
     fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  },
+  scoutTriggerMobile: {
+    left: 14,
+    right: 14,
+    bottom: 14,
+    width: 'auto',
+    padding: '14px 16px',
+    textAlign: 'center',
   },
   mapFallback: {
     width: '100%',

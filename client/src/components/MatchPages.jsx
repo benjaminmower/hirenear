@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useMediaQuery } from '../hooks/useMediaQuery.js';
 
 function Brand() {
   return (
@@ -13,9 +14,11 @@ function Brand() {
 }
 
 function Shell({ children }) {
+  const isMobile = useMediaQuery('(max-width: 700px)');
+
   return (
-    <div style={styles.page}>
-      <div style={styles.card}>
+    <div style={{ ...styles.page, ...(isMobile ? styles.pageMobile : {}) }}>
+      <div style={{ ...styles.card, ...(isMobile ? styles.cardMobile : {}) }}>
         <Brand />
         {children}
       </div>
@@ -24,6 +27,7 @@ function Shell({ children }) {
 }
 
 export function MatchPage({ token }) {
+  const isMobile = useMediaQuery('(max-width: 700px)');
   const [loading, setLoading] = useState(true);
   const [match, setMatch] = useState(null);
   const [status, setStatus] = useState('');
@@ -103,8 +107,8 @@ export function MatchPage({ token }) {
       ) : (
         <>
           <p style={styles.kicker}>Match ready</p>
-          <h1 style={styles.title}>{match?.businessName}</h1>
-          <div style={styles.score}>{match?.fitScore}% fit</div>
+          <h1 style={{ ...styles.title, ...(isMobile ? styles.titleMobile : {}) }}>{match?.businessName}</h1>
+          <div style={{ ...styles.score, ...(isMobile ? styles.scoreMobile : {}) }}>{match?.fitScore}% fit</div>
           <p style={styles.copy}>Someone scouted your location and is interested in working with you.</p>
           {status === 'done' || status === 'already_contacted' ? (
             <p style={styles.message}>{message}</p>
@@ -168,6 +172,10 @@ const styles = {
     background: '#f7f8f5',
     fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   },
+  pageMobile: {
+    alignItems: 'stretch',
+    padding: 14,
+  },
   card: {
     width: 'min(100%, 540px)',
     background: '#ffffff',
@@ -179,6 +187,12 @@ const styles = {
     flexDirection: 'column',
     gap: 18,
     color: '#182033',
+  },
+  cardMobile: {
+    minHeight: 'calc(100dvh - 28px)',
+    borderRadius: 8,
+    padding: 22,
+    justifyContent: 'center',
   },
   brand: {
     display: 'flex',
@@ -223,10 +237,16 @@ const styles = {
     fontSize: 40,
     lineHeight: 1.05,
   },
+  titleMobile: {
+    fontSize: 32,
+  },
   score: {
     fontSize: 26,
     fontWeight: 800,
     color: '#18794e',
+  },
+  scoreMobile: {
+    fontSize: 22,
   },
   copy: {
     fontSize: 16,

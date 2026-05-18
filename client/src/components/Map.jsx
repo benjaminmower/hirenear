@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
+import { useMediaQuery } from '../hooks/useMediaQuery.js';
 
 mapboxgl.accessToken = window.HIRENEAR_CONFIG?.mapboxToken || import.meta.env.VITE_MAPBOX_TOKEN;
 
@@ -107,6 +108,7 @@ export default function Map({
   onSelectBusiness,
   onPinDrop,
 }) {
+  const isMobile = useMediaQuery('(max-width: 700px)');
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const popupRef = useRef(null);
@@ -456,14 +458,14 @@ export default function Map({
     if (popupRef.current) { popupRef.current.remove(); popupRef.current = null; }
     if (!selectedJob || !selectedJob.lat) return;
 
-    const popup = new mapboxgl.Popup({ closeButton: false, maxWidth: '300px' })
+    const popup = new mapboxgl.Popup({ closeButton: false, maxWidth: isMobile ? '260px' : '300px' })
       .setLngLat([selectedJob.lng, selectedJob.lat])
       .setHTML(jobPopupHtml(selectedJob))
       .addTo(map);
 
     popupRef.current = popup;
     map.easeTo({ center: [selectedJob.lng, selectedJob.lat], duration: 400 });
-  }, [selectedJob]);
+  }, [selectedJob, isMobile]);
 
   // Show popup for selected business
   useEffect(() => {
@@ -473,20 +475,20 @@ export default function Map({
     if (popupRef.current) { popupRef.current.remove(); popupRef.current = null; }
     if (!selectedBusiness || !selectedBusiness.lat) return;
 
-    const popup = new mapboxgl.Popup({ closeButton: false, maxWidth: '320px' })
+    const popup = new mapboxgl.Popup({ closeButton: false, maxWidth: isMobile ? '260px' : '320px' })
       .setLngLat([selectedBusiness.lng, selectedBusiness.lat])
       .setHTML(businessPopupHtml(selectedBusiness))
       .addTo(map);
 
     popupRef.current = popup;
     map.easeTo({ center: [selectedBusiness.lng, selectedBusiness.lat], duration: 400 });
-  }, [selectedBusiness]);
+  }, [selectedBusiness, isMobile]);
 
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
       {mode === 'scout' && (
-        <div style={styles.legend}>
+        <div style={{ ...styles.legend, ...(isMobile ? styles.legendMobile : {}) }}>
           {SCOUT_LEGEND.map(item => (
             <div key={item.label} style={styles.legendItem}>
               <span style={{ ...styles.legendDot, background: item.color }} />
@@ -514,6 +516,15 @@ const styles = {
     color: 'var(--text-secondary)',
     fontSize: 11,
     boxShadow: '0 10px 32px rgba(0,0,0,0.28)',
+  },
+  legendMobile: {
+    left: 10,
+    right: 10,
+    bottom: 76,
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 7,
+    padding: '7px 8px',
   },
   legendItem: {
     display: 'flex',

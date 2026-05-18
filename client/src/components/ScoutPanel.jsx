@@ -1,4 +1,5 @@
 import { useMemo, useState, useCallback, useEffect } from 'react';
+import { useMediaQuery } from '../hooks/useMediaQuery.js';
 
 const RADII = [
   { label: '500m', value: 500 },
@@ -143,6 +144,7 @@ export default function ScoutPanel({
   selectedBusiness,
   onClose,
 }) {
+  const isMobile = useMediaQuery('(max-width: 700px)');
   const [resumeText, setResumeText] = useState(scout.run?.resumeText || '');
   const [targetLanes, setTargetLanes] = useState(scout.run?.targetLanes || []);
   const [avoidTerms, setAvoidTerms] = useState(scout.run?.avoidTerms || '');
@@ -197,6 +199,10 @@ export default function ScoutPanel({
   const lanesReady = targetLanes.length > 0;
   const canStart = Boolean(searchPin && resumeReady && lanesReady && !isRunning && !isDiscovering);
   const showReport = complete && scout.summary && reportDismissedRunId !== scout.run?.id;
+  const sx = useCallback((key) => ({
+    ...styles[key],
+    ...(isMobile && mobileStyles[key] ? mobileStyles[key] : {}),
+  }), [isMobile]);
 
   useEffect(() => {
     if (!scout.run) return;
@@ -341,12 +347,12 @@ export default function ScoutPanel({
     const stepMeta = STEP_META[setupStep];
 
     return (
-      <div style={styles.setupOverlay} role="dialog" aria-modal="true" aria-label="Scout setup">
-        <div style={styles.setupShell}>
-          <div style={styles.setupHeader2}>
+      <div style={sx('setupOverlay')} role="dialog" aria-modal="true" aria-label="Scout setup">
+        <div style={sx('setupShell')}>
+          <div style={sx('setupHeader2')}>
             <div>
               <div style={styles.eyebrow}>{stepMeta.eyebrow}</div>
-              <div style={styles.setupTitle}>{stepMeta.title}</div>
+              <div style={sx('setupTitle')}>{stepMeta.title}</div>
             </div>
             <button
               type="button"
@@ -357,9 +363,9 @@ export default function ScoutPanel({
             </button>
           </div>
 
-          <div style={styles.stageCopy}>{stepMeta.copy}</div>
+          <div style={sx('stageCopy')}>{stepMeta.copy}</div>
 
-          <div style={styles.progressTrack}>
+          <div style={sx('progressTrack')}>
             {SETUP_STEPS.map((step, index) => (
               <button
                 key={step}
@@ -378,7 +384,7 @@ export default function ScoutPanel({
             ))}
           </div>
 
-          <div style={styles.setupStage}>
+          <div style={sx('setupStage')}>
           {setupStep === 'area' && (
             <>
               <div style={styles.pinReadout}>
@@ -386,7 +392,7 @@ export default function ScoutPanel({
                 <strong>{searchPin ? 'Dropped pin' : 'Waiting for a pin'}</strong>
                 <span>{searchPin ? `${searchPin.lat.toFixed(4)}, ${searchPin.lng.toFixed(4)}` : 'Click the map to set the search center.'}</span>
               </div>
-              <div style={styles.marketNotes}>
+              <div style={sx('marketNotes')}>
                 <div style={styles.marketNote}>
                   <strong style={styles.marketNoteTitle}>Local-first</strong>
                   <span>Built around real businesses near the candidate.</span>
@@ -402,7 +408,7 @@ export default function ScoutPanel({
           {setupStep === 'resume' && (
             <>
               <textarea
-                style={styles.setupTextarea}
+                style={sx('setupTextarea')}
                 value={resumeText}
                 onChange={e => setResumeText(e.target.value)}
                 placeholder="Paste resume text here..."
@@ -415,7 +421,7 @@ export default function ScoutPanel({
 
           {setupStep === 'lanes' && (
             <>
-              <div style={styles.setupLaneGrid}>
+              <div style={sx('setupLaneGrid')}>
                 {TARGET_LANES.map(lane => (
                   <button
                     key={lane}
@@ -437,19 +443,19 @@ export default function ScoutPanel({
           {setupStep === 'launch' && (
             <>
               <div style={styles.reviewRows}>
-                <div style={styles.reviewRow}>
+                <div style={sx('reviewRow')}>
                   <span>Area</span>
                   <strong>{searchPin ? 'Dropped pin' : 'Missing pin'}</strong>
                 </div>
-                <div style={styles.reviewRow}>
+                <div style={sx('reviewRow')}>
                   <span>Resume</span>
                   <strong>{resumeReady ? 'Ready' : 'Needs more text'}</strong>
                 </div>
-                <div style={styles.reviewRow}>
+                <div style={sx('reviewRow')}>
                   <span>Lanes</span>
                   <strong>{targetLanes.length ? targetLanes.join(', ') : 'None selected'}</strong>
                 </div>
-                <div style={styles.reviewRow}>
+                <div style={sx('reviewRow')}>
                   <span>Radius</span>
                   <select
                     style={styles.inlineSelect}
@@ -469,7 +475,7 @@ export default function ScoutPanel({
 
           {scout.error && <div style={styles.error}>{scout.error}</div>}
 
-          <div style={styles.setupActions}>
+          <div style={sx('setupActions')}>
             <button
               type="button"
               style={styles.backButton}
@@ -508,13 +514,13 @@ export default function ScoutPanel({
   }
 
   return (
-    <div style={styles.scoutOverlay} role="dialog" aria-modal="true" aria-label="Scout run">
-      <div style={styles.scoutShell}>
+    <div style={sx('scoutOverlay')} role="dialog" aria-modal="true" aria-label="Scout run">
+      <div style={sx('scoutShell')}>
         {/* Scout header with close button */}
-        <div style={styles.scoutHeader}>
+        <div style={sx('scoutHeader')}>
           <div>
             <div style={styles.eyebrow}>Scout run</div>
-            <div style={styles.runTitle}>{stage}</div>
+            <div style={sx('runTitle')}>{stage}</div>
           </div>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
             <div style={styles.runPill}>{searchPin ? `${radius / 1000}km` : 'No pin'}</div>
@@ -529,15 +535,15 @@ export default function ScoutPanel({
         </div>
 
         {/* Setup controls */}
-        <div style={styles.controls}>
-        <div style={styles.stepRow}>
+        <div style={sx('controls')}>
+        <div style={sx('stepRow')}>
           <span style={{ ...styles.step, ...(searchPin ? styles.stepDone : {}) }}>Pin</span>
           <span style={{ ...styles.step, ...(resumeText.trim().length >= 40 ? styles.stepDone : {}) }}>Resume</span>
           <span style={{ ...styles.step, ...(targetLanes.length > 0 ? styles.stepDone : {}) }}>Lanes</span>
           <span style={{ ...styles.step, ...(hasRun ? styles.stepDone : {}) }}>Walk</span>
         </div>
         <textarea
-          style={styles.textarea}
+          style={sx('textarea')}
           value={resumeText}
           onChange={e => setResumeText(e.target.value)}
           placeholder="Paste resume text here..."
@@ -545,7 +551,7 @@ export default function ScoutPanel({
         />
         <div style={styles.fieldGroup}>
           <div style={styles.fieldLabel}>What kind of work?</div>
-          <div style={styles.laneGrid}>
+          <div style={sx('laneGrid')}>
             {TARGET_LANES.map(lane => (
               <button
                 key={lane}
@@ -570,7 +576,7 @@ export default function ScoutPanel({
           placeholder="Avoid jobs like: barista, server, cashier"
           disabled={isRunning || isDiscovering}
         />
-        <div style={styles.controlRow}>
+        <div style={sx('controlRow')}>
           <select
             style={styles.select}
             value={radius}
@@ -604,7 +610,7 @@ export default function ScoutPanel({
 
       {/* Stats bar */}
       {businesses.length > 0 && (
-        <div style={styles.stats}>
+        <div style={sx('stats')}>
           <span>{businesses.length} places</span>
           <span>{queuedBusinesses.length} queued</span>
           <span>{visitedCount} visited</span>
@@ -615,7 +621,7 @@ export default function ScoutPanel({
 
       {/* Game mechanic: Next Stop card */}
       {isRunning && activeBusiness && (
-        <div style={styles.nextStop}>
+        <div style={sx('nextStop')}>
           <div style={styles.nextStopLabel}>
             {checkingBusiness ? 'Inspecting website' : 'Next stop'}
           </div>
@@ -633,7 +639,7 @@ export default function ScoutPanel({
               Checking public pages...
             </div>
           ) : (
-            <div style={styles.nextStopActions}>
+            <div style={sx('nextStopActions')}>
               <button
                 type="button"
                 style={styles.visitButton}
@@ -663,7 +669,7 @@ export default function ScoutPanel({
       )}
 
       {complete && scout.summary && (
-        <div style={styles.reportLauncher}>
+        <div style={sx('reportLauncher')}>
           <div>
             <div style={styles.reportLauncherTitle}>Scout report ready</div>
             <div style={styles.reportLauncherMeta}>{visitedCount} visited · {highFitBusinesses.length} top fits</div>
@@ -685,7 +691,7 @@ export default function ScoutPanel({
       )}
 
       {/* Visited/decided businesses log */}
-      <div style={styles.list}>
+      <div style={sx('list')}>
         {decidedBusinesses.length === 0 && !isRunning && (
           <div style={styles.empty}>Drop a pin, paste a resume, choose up to 3 lanes, then start walking nearby businesses.</div>
         )}
@@ -703,7 +709,7 @@ export default function ScoutPanel({
               style={{ ...styles.card, ...(selected ? styles.cardSelected : {}), ...(business.inspectionStatus === 'skipped' ? styles.cardSkipped : {}) }}
               onClick={() => onSelectBusiness(selected ? null : business)}
             >
-              <div style={styles.cardHeader}>
+              <div style={sx('cardHeader')}>
                 <span style={styles.title}>{business.name}</span>
                 <span style={{ ...styles.badge, ...signalStyle(signal) }}>
                   {business.inspectionStatus === 'skipped' ? 'Skipped' : signalLabel(signal)}
@@ -712,7 +718,7 @@ export default function ScoutPanel({
               <div style={styles.meta}>{business.vicinity}</div>
               {business.inspectionStatus !== 'skipped' && (
                 <>
-                  <div style={styles.scoreRow}>
+                  <div style={sx('scoreRow')}>
                     <span style={styles.score}>{business.fitScore ?? '--'}</span>
                     <span style={styles.reason}>{business.fitReason || business.signalSummary || 'Inspecting...'}</span>
                   </div>
@@ -759,12 +765,12 @@ export default function ScoutPanel({
       </div>
 
       {showReport && (
-        <div style={styles.reportOverlay} role="dialog" aria-modal="true" aria-label="Scout report">
-          <div style={styles.reportShell}>
-            <div style={styles.reportHeader}>
+        <div style={sx('reportOverlay')} role="dialog" aria-modal="true" aria-label="Scout report">
+          <div style={sx('reportShell')}>
+            <div style={sx('reportHeader')}>
               <div>
                 <div style={styles.eyebrow}>Scout report</div>
-                <div style={styles.reportTitle}>Ranked neighborhood report</div>
+                <div style={sx('reportTitle')}>Ranked neighborhood report</div>
               </div>
               <button
                 type="button"
@@ -775,7 +781,7 @@ export default function ScoutPanel({
               </button>
             </div>
 
-            <div style={styles.reportStats}>
+            <div style={sx('reportStats')}>
               <div style={styles.reportStat}><strong>{businesses.length}</strong><span>places</span></div>
               <div style={styles.reportStat}><strong>{visitedCount}</strong><span>visited</span></div>
               <div style={styles.reportStat}><strong>{strongCount}</strong><span>signals</span></div>
@@ -800,7 +806,7 @@ export default function ScoutPanel({
                     </div>
                   ))}
                 </div>
-                <div style={styles.reportInterestActions}>
+                <div style={sx('reportInterestActions')}>
                   <input
                     id="interest-email"
                     style={styles.reportInput}
@@ -830,7 +836,7 @@ export default function ScoutPanel({
             )}
 
             <div style={styles.reportSectionTitle}>Ranked businesses</div>
-            <div style={styles.reportGrid}>
+            <div style={sx('reportGrid')}>
               {decidedBusinesses.filter(business => business.inspectionStatus !== 'skipped').map(business => {
                 const matchSignals = validMatchSignals(business.matchSignals);
                 return (
@@ -1664,4 +1670,149 @@ const styles = {
     fontSize: 12,
   },
   cardSkipped: { opacity: 0.6 },
+};
+
+const mobileStyles = {
+  setupOverlay: {
+    padding: 0,
+  },
+  setupShell: {
+    minHeight: '100dvh',
+    maxWidth: 'none',
+    borderRadius: 0,
+    padding: '18px 14px',
+    gap: 14,
+  },
+  setupHeader2: {
+    gap: 12,
+  },
+  setupTitle: {
+    fontSize: 28,
+  },
+  stageCopy: {
+    maxWidth: 'none',
+    fontSize: 14,
+    lineHeight: 1.5,
+  },
+  progressTrack: {
+    gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+    gap: 6,
+  },
+  setupStage: {
+    minHeight: 0,
+    gap: 14,
+  },
+  marketNotes: {
+    gridTemplateColumns: '1fr',
+  },
+  setupTextarea: {
+    minHeight: 240,
+    fontSize: 14,
+  },
+  setupLaneGrid: {
+    gridTemplateColumns: '1fr',
+  },
+  reviewRow: {
+    alignItems: 'flex-start',
+    flexDirection: 'column',
+    gap: 6,
+  },
+  setupActions: {
+    position: 'sticky',
+    bottom: 0,
+    margin: '0 -14px -18px',
+    padding: '12px 14px calc(12px + env(safe-area-inset-bottom))',
+    background: '#f7f8f5',
+    borderTop: '1px solid #d9d3c9',
+  },
+  scoutOverlay: {
+    padding: 0,
+  },
+  scoutShell: {
+    minHeight: '100dvh',
+    maxWidth: 'none',
+    borderRadius: 0,
+    padding: '16px 12px',
+    gap: 10,
+  },
+  scoutHeader: {
+    gap: 12,
+    marginBottom: 4,
+  },
+  runTitle: {
+    fontSize: 20,
+  },
+  controls: {
+    margin: '0 -12px',
+    padding: '14px 12px',
+  },
+  stepRow: {
+    gap: 5,
+  },
+  textarea: {
+    minHeight: 132,
+    fontSize: 14,
+  },
+  laneGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+    gap: 7,
+  },
+  controlRow: {
+    flexDirection: 'column',
+  },
+  stats: {
+    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+    rowGap: 8,
+  },
+  nextStop: {
+    margin: '10px 0',
+    padding: 14,
+  },
+  nextStopActions: {
+    position: 'sticky',
+    bottom: 0,
+    paddingBottom: 'env(safe-area-inset-bottom)',
+  },
+  reportLauncher: {
+    margin: '10px 0',
+    alignItems: 'stretch',
+    flexDirection: 'column',
+  },
+  list: {
+    margin: '0 -12px',
+    padding: '10px 12px 88px',
+  },
+  cardHeader: {
+    flexDirection: 'column',
+    gap: 6,
+  },
+  scoreRow: {
+    gap: 10,
+  },
+  reportOverlay: {
+    padding: 0,
+  },
+  reportShell: {
+    minHeight: '100dvh',
+    maxWidth: 'none',
+    borderRadius: 0,
+    border: 'none',
+    padding: '18px 14px',
+  },
+  reportHeader: {
+    gap: 12,
+  },
+  reportTitle: {
+    fontSize: 30,
+  },
+  reportStats: {
+    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+  },
+  reportInterestActions: {
+    flexDirection: 'column',
+  },
+  reportGrid: {
+    gridTemplateColumns: '1fr',
+  },
 };

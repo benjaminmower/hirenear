@@ -1,5 +1,6 @@
 import { Suspense, lazy, useRef, useState } from 'react';
 import ForBusinessesPage from './components/ForBusinessesPage.jsx';
+import PrivacyPage from './components/PrivacyPage.jsx';
 import SearchPanel from './components/SearchPanel.jsx';
 import { MatchConfirmPage, MatchPage } from './components/MatchPages.jsx';
 import ScoutPanel from './components/ScoutPanel.jsx';
@@ -45,8 +46,14 @@ function getMatchRoute(pathname) {
 }
 
 export default function App() {
-  if (window.location.pathname.replace(/\/+$/, '') === '/for-businesses') {
+  const normalizedPath = window.location.pathname.replace(/\/+$/, '') || '/';
+
+  if (normalizedPath === '/for-businesses') {
     return <ForBusinessesPage />;
+  }
+
+  if (normalizedPath === '/privacy') {
+    return <PrivacyPage />;
   }
 
   const matchRoute = getMatchRoute(window.location.pathname);

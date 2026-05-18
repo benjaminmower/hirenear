@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import PublicFooter from './PublicFooter.jsx';
 import { useMediaQuery } from '../hooks/useMediaQuery.js';
 
 const CONTACT_EMAIL = 'hello@hirenear.app';
@@ -102,6 +103,7 @@ export default function ForBusinessesPage() {
           {CONTACT_EMAIL}
         </a>
       </section>
+      <PublicFooter />
     </main>
   );
 }

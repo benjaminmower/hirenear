@@ -5,6 +5,7 @@ import { getErrorMessage } from './limits.js';
 import { logError, logInfo, logWarn } from './logger.js';
 
 const LIKELY_PATHS = ['/careers', '/jobs', '/employment', '/join-us', '/work-with-us', '/apply', '/contact'];
+const ABOUT_PATHS = ['/about', '/about-us', '/who-we-are'];
 const STRONG_PATTERNS = [
   /\bwe'?re hiring\b/i,
   /\bnow hiring\b/i,
@@ -32,6 +33,17 @@ const hostLookupCache = new Map();
 const activeInspectionContexts = new Map();
 const EMAIL_PATTERN = /\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b/ig;
 const EMAIL_VALIDATION_PATTERN = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/;
+const BOILERPLATE_LINE_PATTERNS = [
+  /^skip to/i,
+  /^menu$/i,
+  /^search$/i,
+  /^privacy policy$/i,
+  /^terms (of use|and conditions|& conditions)$/i,
+  /^cookie/i,
+  /^copyright\b/i,
+  /^all rights reserved/i,
+  /^(facebook|instagram|linkedin|twitter|x|youtube)$/i,
+];
 
 export function normalizeDomain(website) {
   try {
@@ -296,6 +308,38 @@ function summarizeSignal(signal, opportunities) {
   return 'No hiring signal found on checked pages';
 }
 
+function cleanVisibleText(rawText, maxChars = 12000) {
+  const lines = String(rawText || '')
+    .split(/\n+/)
+    .map(line => line.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .filter(line => line.length > 2)
+    .filter(line => !BOILERPLATE_LINE_PATTERNS.some(pattern => pattern.test(line)));
+  return lines.join(' ').replace(/\s+/g, ' ').trim().slice(0, maxChars);
+}
+
+function textExcerpt(text, maxChars = 800) {
+  return cleanVisibleText(text, maxChars);
+}
+
+function isHomepageUrl(url) {
+  try {
+    const parsed = new URL(url);
+    return parsed.pathname === '/' || parsed.pathname === '';
+  } catch {
+    return false;
+  }
+}
+
+function isAboutUrl(url) {
+  try {
+    const pathname = new URL(url).pathname.toLowerCase().replace(/\/+$/, '');
+    return pathname === '/about' || pathname === '/about-us' || pathname === '/who-we-are';
+  } catch {
+    return false;
+  }
+}
+
 async function readPageText(page, context, url, timeoutMs) {
   await assertSafeHttpUrl(url);
 
@@ -305,9 +349,7 @@ async function readPageText(page, context, url, timeoutMs) {
     const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
     await assertSafeHttpUrl(page.url() || response?.url() || url);
     const title = await page.title();
-    const text = (await page.locator('body').innerText({ timeout: Math.min(3000, timeoutMs) }))
-      .replace(/\s+/g, ' ')
-      .slice(0, 12000);
+    const text = cleanVisibleText(await page.locator('body').innerText({ timeout: Math.min(3000, timeoutMs) }));
     return { title, text };
   })().catch(err => {
     if (closedForTimeout) return null;
@@ -363,7 +405,7 @@ function firstMailtoEmail(hrefs) {
   return null;
 }
 
-export async function inspectWebsite(website, { maxPages = 5, timeoutMs = PAGE_VISIT_TIMEOUT_MS, runId, emitStep } = {}) {
+export async function inspectWebsite(website, { maxPages = 9, timeoutMs = PAGE_VISIT_TIMEOUT_MS, runId, emitStep } = {}) {
   const domain = normalizeDomain(website);
   if (!website || !domain) {
     logWarn('website_inspection_rejected', { runId, reason: 'missing_or_invalid_website' });
@@ -374,6 +416,8 @@ export async function inspectWebsite(website, { maxPages = 5, timeoutMs = PAGE_V
       evidence: [],
       opportunities: [],
       error: 'missing_website',
+      homepageExcerpt: null,
+      aboutExcerpt: null,
     };
   }
 
@@ -399,13 +443,19 @@ export async function inspectWebsite(website, { maxPages = 5, timeoutMs = PAGE_V
   });
   const page = await context.newPage();
   const baseUrl = normalizeUrl(website, website);
-  const queue = [baseUrl, ...LIKELY_PATHS.map(path => normalizeUrl(path, baseUrl))].filter(Boolean);
+  const queue = [
+    baseUrl,
+    ...LIKELY_PATHS.map(path => normalizeUrl(path, baseUrl)),
+    normalizeUrl(ABOUT_PATHS[0], baseUrl),
+  ].filter(Boolean);
   const seen = new Set();
   const evidence = [];
   const opportunities = [];
   let bestSignal = 'none';
   const overallTimeoutMs = timeoutMs * maxPages;
   let contactEmail = null;
+  let homepageExcerpt = null;
+  let aboutExcerpt = null;
 
   try {
     await assertSafeHttpUrl(baseUrl);
@@ -423,6 +473,12 @@ export async function inspectWebsite(website, { maxPages = 5, timeoutMs = PAGE_V
           continue;
         }
         const { title, text } = await readPageText(page, context, url, timeoutMs);
+        if (!homepageExcerpt && isHomepageUrl(url)) {
+          homepageExcerpt = textExcerpt(text);
+        }
+        if (!aboutExcerpt && isAboutUrl(url)) {
+          aboutExcerpt = textExcerpt(text);
+        }
         const mailtoLinks = await page.locator('a[href^="mailto:"]').evaluateAll(links =>
           links.map(link => link.getAttribute('href')).filter(Boolean)
         );
@@ -452,7 +508,7 @@ export async function inspectWebsite(website, { maxPages = 5, timeoutMs = PAGE_V
         if (seen.size === 1) {
           const hrefs = await page.locator('a[href]').evaluateAll(links => links
             .map(link => ({ href: link.getAttribute('href'), text: link.textContent || '' }))
-            .filter(link => /(career|jobs?|employment|join.?us|work.?with.?us|apply|contact)/i.test(`${link.text} ${link.href}`))
+            .filter(link => /(about|who.?we.?are|career|jobs?|employment|join.?us|work.?with.?us|apply|contact)/i.test(`${link.text} ${link.href}`))
             .map(link => link.href)
           );
           for (const href of hrefs) {
@@ -489,6 +545,8 @@ export async function inspectWebsite(website, { maxPages = 5, timeoutMs = PAGE_V
       opportunities,
       contactEmail: contactEmail || null,
       inspectedPages: seen.size,
+      homepageExcerpt,
+      aboutExcerpt,
     };
   } catch (err) {
     logError('website_inspection_failed', { runId, domain, durationMs: Date.now() - start, error: err });
@@ -500,6 +558,8 @@ export async function inspectWebsite(website, { maxPages = 5, timeoutMs = PAGE_V
       opportunities,
       contactEmail: contactEmail || null,
       error: getErrorMessage(err),
+      homepageExcerpt,
+      aboutExcerpt,
     };
   } finally {
     unregisterContext();

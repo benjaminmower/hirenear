@@ -48,10 +48,15 @@ async function runMigrations() {
       vicinity TEXT,
       rating DOUBLE PRECISION,
       user_ratings_total INTEGER,
+      primary_type_display_name TEXT,
+      business_status TEXT,
+      google_maps_uri TEXT,
+      weekday_descriptions JSONB,
       website TEXT,
       inspection_status TEXT NOT NULL DEFAULT 'queued',
       signal_strength TEXT NOT NULL DEFAULT 'queued',
       signal_summary TEXT,
+      company_profile JSONB,
       fit_score INTEGER,
       match_summary TEXT,
       match_signals JSONB,
@@ -79,6 +84,7 @@ async function runMigrations() {
       signal_summary TEXT,
       evidence JSONB NOT NULL DEFAULT '[]'::jsonb,
       opportunities JSONB NOT NULL DEFAULT '[]'::jsonb,
+      company_profile JSONB,
       contact_email TEXT,
       error TEXT,
       inspected_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -170,13 +176,18 @@ async function runMigrations() {
       ADD COLUMN IF NOT EXISTS discovery_source TEXT,
       ADD COLUMN IF NOT EXISTS discovery_query TEXT,
       ADD COLUMN IF NOT EXISTS discovery_score INTEGER,
-      ADD COLUMN IF NOT EXISTS contact_email TEXT;
+      ADD COLUMN IF NOT EXISTS primary_type_display_name TEXT,
+      ADD COLUMN IF NOT EXISTS business_status TEXT,
+      ADD COLUMN IF NOT EXISTS google_maps_uri TEXT,
+      ADD COLUMN IF NOT EXISTS weekday_descriptions JSONB,
+      ADD COLUMN IF NOT EXISTS company_profile JSONB;
   `);
 
   await pool.query(`
     ALTER TABLE business_inspections
       ADD COLUMN IF NOT EXISTS id UUID DEFAULT gen_random_uuid(),
       ADD COLUMN IF NOT EXISTS run_id TEXT REFERENCES scout_runs(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS company_profile JSONB,
       ADD COLUMN IF NOT EXISTS contact_email TEXT;
   `);
 

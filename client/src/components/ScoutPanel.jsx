@@ -82,6 +82,85 @@ function validMatchSignals(signals) {
     .slice(0, MAX_MATCH_SIGNALS);
 }
 
+function cleanProfileArray(items, max = 6) {
+  return Array.isArray(items)
+    ? items.filter(item => typeof item === 'string' && item.trim()).slice(0, max)
+    : [];
+}
+
+function profileHasDetails(profile) {
+  if (!profile) return false;
+  return Boolean(
+    profile.industry ||
+    profile.foundedYear ||
+    profile.sizeCue ||
+    cleanProfileArray(profile.services, 4).length ||
+    cleanProfileArray(profile.signals, 6).length
+  );
+}
+
+function businessPlaceMeta(business) {
+  const pieces = [];
+  if (business.primaryTypeDisplayName) pieces.push(business.primaryTypeDisplayName);
+  if (business.rating) {
+    const count = businessReviewCount(business);
+    pieces.push(`★ ${business.rating}${count ? ` (${count})` : ''}`);
+  }
+  return pieces.join(' · ');
+}
+
+function businessReviewCount(business) {
+  return Number(business.userRatingCount ?? business.userRatingsTotal ?? business.user_ratings_total ?? 0) || 0;
+}
+
+function businessRating(business) {
+  return Number(business.rating || 0) || 0;
+}
+
+function compareQueuedBusinesses(a, b) {
+  const scoreDelta = (Number(b.discoveryScore || 0) || 0) - (Number(a.discoveryScore || 0) || 0);
+  if (scoreDelta !== 0) return scoreDelta;
+  const reviewDelta = businessReviewCount(b) - businessReviewCount(a);
+  if (reviewDelta !== 0) return reviewDelta;
+  const ratingDelta = businessRating(b) - businessRating(a);
+  if (ratingDelta !== 0) return ratingDelta;
+  return String(a.name || '').localeCompare(String(b.name || ''));
+}
+
+function queueLeadBand(discoveryScore) {
+  const score = Number(discoveryScore || 0) || 0;
+  if (score >= 250) return 'Strong lead';
+  if (score >= 100) return 'Worth checking';
+  return 'Long shot';
+}
+
+function queueBandStyle(discoveryScore) {
+  const score = Number(discoveryScore || 0) || 0;
+  if (score >= 250) return styles.queueBandStrong;
+  if (score >= 100) return styles.queueBandMedium;
+  return styles.queueBandLow;
+}
+
+function hasStrongSearchApiOpportunity(businessOpportunities) {
+  return businessOpportunities.some(item => item.source === 'searchapi' && item.signalStrength === 'strong');
+}
+
+function whyQueued(business, businessOpportunities) {
+  if (business.discoverySource === 'job_search' || hasStrongSearchApiOpportunity(businessOpportunities)) {
+    return 'Job posting found';
+  }
+  if (business.discoverySource === 'employer_search') {
+    return `Matches your search: ${business.discoveryQuery || 'local employer search'}`;
+  }
+  return 'Nearby business worth a look';
+}
+
+function queueSummary(queuedBusinesses) {
+  const strongLeads = queuedBusinesses.filter(item => Number(item.discoveryScore || 0) >= 250).length;
+  if (strongLeads > 0) return `${strongLeads} strong lead${strongLeads === 1 ? '' : 's'} in queue`;
+  return `${queuedBusinesses.length} door${queuedBusinesses.length === 1 ? '' : 's'} in queue`;
+}
+
 function bestBusinessLink(business, opportunities) {
   const websiteOpportunity = opportunities.find(item => item.source === 'website' && item.url);
   const anyOpportunity = opportunities.find(item => item.url);
@@ -147,6 +226,7 @@ export default function ScoutPanel({
   const [interestResult, setInterestResult] = useState(null);
   const [interestError, setInterestError] = useState('');
   const [reportDismissedRunId, setReportDismissedRunId] = useState(null);
+  const [expandedProfiles, setExpandedProfiles] = useState({});
   const [profile, setProfile] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem('hirenear:userProfile') || '{}');
@@ -159,7 +239,7 @@ export default function ScoutPanel({
   const matches = scout.matches || [];
 
   const queuedBusinesses = useMemo(() =>
-    businesses.filter(b => b.inspectionStatus === 'queued'),
+    [...businesses.filter(b => b.inspectionStatus === 'queued')].sort(compareQueuedBusinesses),
     [businesses]
   );
   const decidedBusinesses = useMemo(() =>
@@ -209,6 +289,7 @@ export default function ScoutPanel({
     setInterestResult(null);
     setInterestError('');
     setReportDismissedRunId(null);
+    setExpandedProfiles({});
   }, [scout.run?.id]);
 
   const handleStart = () => {
@@ -313,6 +394,10 @@ export default function ScoutPanel({
   const handleSkip = useCallback(async (business) => {
     await scout.skipBusiness(business.placeId);
   }, [scout]);
+
+  const toggleBusinessProfile = useCallback((businessId) => {
+    setExpandedProfiles(current => ({ ...current, [businessId]: !current[businessId] }));
+  }, []);
 
   const handleDelete = async () => {
     try {
@@ -617,9 +702,12 @@ export default function ScoutPanel({
           <div style={styles.nextStopLabel}>
             {checkingBusiness ? 'Inspecting website' : 'Next stop'}
           </div>
+          <div style={styles.nextStopQueueMeta}>
+            {queueSummary(checkingBusiness ? [checkingBusiness, ...queuedBusinesses] : queuedBusinesses)}
+          </div>
           <div style={styles.nextStopName}>{activeBusiness.name}</div>
-          {activeBusiness.category && (
-            <div style={styles.nextStopCategory}>{activeBusiness.category}</div>
+          {(activeBusiness.primaryTypeDisplayName || activeBusiness.category) && (
+            <div style={styles.nextStopCategory}>{activeBusiness.primaryTypeDisplayName || activeBusiness.category}</div>
           )}
           <div style={styles.nextStopMeta}>{activeBusiness.vicinity}</div>
           {activeBusiness.website && (
@@ -684,6 +772,79 @@ export default function ScoutPanel({
 
       {/* Visited/decided businesses log */}
       <div style={sx('list')}>
+        {isRunning && queuedBusinesses.length > 0 && (
+          <div style={styles.queueSection}>
+            <div style={sx('queueSectionHeader')}>
+              <div>
+                <div style={styles.eyebrow}>Street queue</div>
+                <div style={styles.queueTitle}>Doors worth opening</div>
+              </div>
+              <div style={styles.queueCount}>{queuedBusinesses.length} queued</div>
+            </div>
+            <div style={styles.queueCards}>
+              {queuedBusinesses.map((business, index) => {
+                const businessOpportunities = opportunities.filter(item => item.businessId === business.id);
+                const selected = selectedBusiness?.id === business.id;
+                const placeMeta = businessPlaceMeta(business);
+                return (
+                  <div
+                    key={business.id}
+                    style={{ ...styles.queueCard, ...(selected ? styles.cardSelected : {}) }}
+                    onClick={() => onSelectBusiness(selected ? null : business)}
+                  >
+                    <div style={sx('queueCardHeader')}>
+                      <div style={styles.queueRank}>{index + 1}</div>
+                      <div style={styles.queueCardTitleBlock}>
+                        <div style={styles.queueCardTitle}>{business.name}</div>
+                        {placeMeta && <div style={styles.queueCardMeta}>{placeMeta}</div>}
+                      </div>
+                      <span style={{ ...styles.queueBand, ...queueBandStyle(business.discoveryScore) }}>
+                        {queueLeadBand(business.discoveryScore)}
+                      </span>
+                    </div>
+                    {business.vicinity && <div style={styles.queueVicinity}>{business.vicinity}</div>}
+                    <div style={styles.queueWhy}>{whyQueued(business, businessOpportunities)}</div>
+                    {business.website && (
+                      <a
+                        style={styles.queueWebsite}
+                        href={business.website}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={event => event.stopPropagation()}
+                      >
+                        {String(business.website).replace(/^https?:\/\//, '').replace(/\/$/, '')}
+                      </a>
+                    )}
+                    <div style={styles.queueActions}>
+                      <button
+                        type="button"
+                        style={styles.queueVisitButton}
+                        onClick={event => {
+                          event.stopPropagation();
+                          handleVisit(business);
+                        }}
+                        disabled={visiting}
+                      >
+                        {visiting ? 'Visiting...' : 'Visit'}
+                      </button>
+                      <button
+                        type="button"
+                        style={styles.queueSkipButton}
+                        onClick={event => {
+                          event.stopPropagation();
+                          handleSkip(business);
+                        }}
+                        disabled={visiting}
+                      >
+                        Skip
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
         {decidedBusinesses.length === 0 && !isRunning && (
           <div style={styles.empty}>Drop a pin, paste a resume, choose up to 3 lanes, then start walking nearby businesses.</div>
         )}
@@ -695,6 +856,16 @@ export default function ScoutPanel({
           const signal = business.inspectionStatus === 'checking' ? 'checking'
             : business.inspectionStatus === 'skipped' ? 'none'
             : business.signalStrength;
+          const placeMeta = businessPlaceMeta(business);
+          const profile = business.companyProfile;
+          const profileExpanded = Boolean(expandedProfiles[business.id]);
+          const showProfilePlaceholder = !complete &&
+            business.inspectionStatus !== 'skipped' &&
+            business.inspectionStatus !== 'failed' &&
+            !profile?.blurb &&
+            business.fitScore == null;
+          const services = cleanProfileArray(profile?.services, 4);
+          const profileSignals = cleanProfileArray(profile?.signals, 6);
           return (
             <div
               key={business.id}
@@ -708,6 +879,56 @@ export default function ScoutPanel({
                 </span>
               </div>
               <div style={styles.meta}>{business.vicinity}</div>
+              {placeMeta && <div style={styles.placeMeta}>{placeMeta}</div>}
+              {profile?.blurb ? (
+                <div style={styles.companyBlurb} title={profile.blurb}>{profile.blurb}</div>
+              ) : showProfilePlaceholder ? (
+                <div style={styles.companyBlurbMuted}>Learning about this business...</div>
+              ) : null}
+              {(profileHasDetails(profile) || business.googleMapsUri || cleanProfileArray(business.weekdayDescriptions, 7).length > 0) && (
+                <button
+                  type="button"
+                  style={styles.profileToggle}
+                  onClick={event => {
+                    event.stopPropagation();
+                    toggleBusinessProfile(business.id);
+                  }}
+                >
+                  {profileExpanded ? 'Hide business details' : 'More about this business'}
+                </button>
+              )}
+              {profileExpanded && (
+                <div style={styles.companyProfile}>
+                  <div style={styles.profileFacts}>
+                    {profile?.industry && <span>{profile.industry}</span>}
+                    {profile?.foundedYear && <span>Founded {profile.foundedYear}</span>}
+                    {profile?.sizeCue && <span>{profile.sizeCue}</span>}
+                    {business.businessStatus && <span>{business.businessStatus.replace(/_/g, ' ').toLowerCase()}</span>}
+                  </div>
+                  {services.length > 0 && (
+                    <div style={styles.chipRow}>
+                      {services.map(item => <span key={`service:${business.id}:${item}`} style={styles.serviceChip}>{item}</span>)}
+                    </div>
+                  )}
+                  {profileSignals.length > 0 && (
+                    <div style={styles.chipRow}>
+                      {profileSignals.map(item => <span key={`signal:${business.id}:${item}`} style={styles.signalChip}>{item}</span>)}
+                    </div>
+                  )}
+                  {cleanProfileArray(business.weekdayDescriptions, 7).length > 0 && (
+                    <div style={styles.hoursList}>
+                      {cleanProfileArray(business.weekdayDescriptions, 7).map(item => (
+                        <div key={`hours:${business.id}:${item}`}>{item}</div>
+                      ))}
+                    </div>
+                  )}
+                  {business.googleMapsUri && (
+                    <a style={styles.link} href={business.googleMapsUri} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}>
+                      Open in Google Maps
+                    </a>
+                  )}
+                </div>
+              )}
               {business.inspectionStatus !== 'skipped' && (
                 <>
                   <div style={sx('scoreRow')}>
@@ -1460,6 +1681,127 @@ const styles = {
     flexShrink: 0,
   },
   list: { overflowY: 'auto', flex: 1, padding: '10px 12px 16px', background: '#f7f8f5' },
+  queueSection: {
+    marginBottom: 14,
+    paddingBottom: 4,
+    borderBottom: '1px solid #d9d3c9',
+  },
+  queueSectionHeader: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+    margin: '2px 2px 10px',
+  },
+  queueTitle: {
+    color: '#182033',
+    fontSize: 15,
+    fontWeight: 800,
+    lineHeight: 1.2,
+  },
+  queueCount: {
+    color: '#6f5f4c',
+    background: '#ffffff',
+    border: '1px solid #d9d3c9',
+    borderRadius: 999,
+    padding: '4px 8px',
+    fontSize: 11,
+    fontWeight: 800,
+    flexShrink: 0,
+  },
+  queueCards: {
+    display: 'grid',
+    gridTemplateColumns: '1fr',
+    gap: 10,
+  },
+  queueCard: {
+    padding: 14,
+    border: '1px solid #d9d3c9',
+    borderRadius: 6,
+    background: '#ffffff',
+    cursor: 'pointer',
+    boxShadow: '0 8px 24px rgba(24, 32, 51, 0.06)',
+  },
+  queueCardHeader: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  queueRank: {
+    width: 26,
+    height: 26,
+    borderRadius: 4,
+    background: '#f0e6dc',
+    color: '#6f5f4c',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: 12,
+    fontWeight: 800,
+    flexShrink: 0,
+  },
+  queueCardTitleBlock: { flex: 1, minWidth: 0 },
+  queueCardTitle: { color: '#182033', fontSize: 14, fontWeight: 800, lineHeight: 1.3 },
+  queueCardMeta: { color: '#4d5665', fontSize: 11, lineHeight: 1.35, marginTop: 3 },
+  queueBand: {
+    borderRadius: 4,
+    padding: '3px 7px',
+    fontSize: 10,
+    fontWeight: 800,
+    flexShrink: 0,
+    whiteSpace: 'nowrap',
+  },
+  queueBandStrong: { background: '#e5f4ec', color: '#18794e' },
+  queueBandMedium: { background: '#fff4d6', color: '#936d10' },
+  queueBandLow: { background: '#f0e6dc', color: '#6f5f4c' },
+  queueVicinity: { color: '#6f5f4c', fontSize: 12, lineHeight: 1.35, marginTop: 9 },
+  queueWhy: {
+    color: '#182033',
+    background: '#f7f8f5',
+    border: '1px solid #ece5dc',
+    borderRadius: 4,
+    padding: '7px 8px',
+    fontSize: 12,
+    lineHeight: 1.4,
+    marginTop: 10,
+  },
+  queueWebsite: {
+    display: 'inline-block',
+    color: '#255e91',
+    fontSize: 12,
+    fontWeight: 800,
+    textDecoration: 'none',
+    marginTop: 9,
+    maxWidth: '100%',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  queueActions: { display: 'flex', gap: 8, marginTop: 12 },
+  queueVisitButton: {
+    flex: 1,
+    background: '#182033',
+    border: 'none',
+    borderRadius: 4,
+    color: '#ffffff',
+    padding: '9px 11px',
+    font: 'inherit',
+    fontSize: 12,
+    fontWeight: 800,
+    cursor: 'pointer',
+  },
+  queueSkipButton: {
+    flex: 1,
+    background: '#ffffff',
+    border: '1px solid #d9d3c9',
+    borderRadius: 4,
+    color: '#6f5f4c',
+    padding: '9px 11px',
+    font: 'inherit',
+    fontSize: 12,
+    fontWeight: 800,
+    cursor: 'pointer',
+  },
   empty: {
     margin: 10,
     padding: 24,
@@ -1490,6 +1832,74 @@ const styles = {
   badgeChecking: { background: '#fff4d6', color: '#936d10' },
   badgeMuted: { background: '#f0e6dc', color: '#6f5f4c' },
   meta: { color: '#6f5f4c', fontSize: 12, lineHeight: 1.35, marginBottom: 8 },
+  placeMeta: { color: '#4d5665', fontSize: 11, lineHeight: 1.35, marginBottom: 6 },
+  companyBlurb: {
+    color: '#182033',
+    fontSize: 12,
+    lineHeight: 1.4,
+    marginBottom: 8,
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  },
+  companyBlurbMuted: {
+    color: '#8b8173',
+    fontSize: 12,
+    lineHeight: 1.4,
+    marginBottom: 8,
+  },
+  profileToggle: {
+    background: 'transparent',
+    border: 'none',
+    color: '#255e91',
+    padding: 0,
+    margin: '0 0 8px 0',
+    font: 'inherit',
+    fontSize: 11,
+    fontWeight: 800,
+    cursor: 'pointer',
+    textAlign: 'left',
+  },
+  companyProfile: {
+    borderTop: '1px solid #ece5dc',
+    borderBottom: '1px solid #ece5dc',
+    padding: '9px 0',
+    marginBottom: 10,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 7,
+  },
+  profileFacts: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: 6,
+    color: '#4d5665',
+    fontSize: 11,
+    lineHeight: 1.35,
+    textTransform: 'capitalize',
+  },
+  chipRow: { display: 'flex', flexWrap: 'wrap', gap: 5 },
+  serviceChip: {
+    background: '#e6eef7',
+    color: '#255e91',
+    borderRadius: 4,
+    padding: '3px 6px',
+    fontSize: 10,
+    fontWeight: 700,
+  },
+  signalChip: {
+    background: '#e5f4ec',
+    color: '#18794e',
+    borderRadius: 4,
+    padding: '3px 6px',
+    fontSize: 10,
+    fontWeight: 700,
+  },
+  hoursList: {
+    color: '#6f5f4c',
+    fontSize: 10,
+    lineHeight: 1.45,
+  },
   scoreRow: { display: 'flex', gap: 8, alignItems: 'flex-start' },
   score: { width: 38, color: '#18794e', fontSize: 22, fontWeight: 800, lineHeight: 1 },
   reason: { flex: 1, color: '#4d5665', fontSize: 12, lineHeight: 1.45 },
@@ -1523,6 +1933,17 @@ const styles = {
     boxShadow: '0 12px 34px rgba(24, 32, 51, 0.08)',
   },
   nextStopLabel: { fontSize: 11, color: '#8b8173', marginBottom: 8, textTransform: 'uppercase', fontWeight: 800 },
+  nextStopQueueMeta: {
+    color: '#6f5f4c',
+    background: '#f7f8f5',
+    border: '1px solid #ece5dc',
+    borderRadius: 4,
+    display: 'inline-flex',
+    padding: '4px 7px',
+    fontSize: 11,
+    fontWeight: 800,
+    marginBottom: 10,
+  },
   nextStopName: {
     fontFamily: 'Georgia, "Times New Roman", serif',
     fontSize: 24,
@@ -1873,6 +2294,15 @@ const mobileStyles = {
   list: {
     margin: '0 -12px',
     padding: '10px 12px 88px',
+  },
+  queueSectionHeader: {
+    alignItems: 'stretch',
+    flexDirection: 'column',
+    gap: 8,
+  },
+  queueCardHeader: {
+    flexWrap: 'wrap',
+    gap: 10,
   },
   cardHeader: {
     flexDirection: 'column',

@@ -7,6 +7,8 @@ The Scout workflow is intentionally website-first and human-paced. SearchAPI is 
 ## Features
 
 - Scout mode for pasted resumes and dropped map pins
+- Mobile-first map UI with city search (Mapbox autocomplete) and anchored pin CTA
+- Step-by-step inspection feedback shown in a modal overlay during a run
 - Broad target lanes such as Finance, Healthcare, Hospitality, Office/Admin, and Retail
 - Optional avoid terms for roles the user does not want
 - Google Places nearby business discovery
@@ -18,9 +20,14 @@ The Scout workflow is intentionally website-first and human-paced. SearchAPI is 
 - Postgres persistence for runs, businesses, inspections, opportunities, and matches
 - Cached website inspections with a configurable TTL
 - Business-level fit scores plus opportunity-level match records
+- Cached company profile blurbs generated inside the existing batched Claude matching call
+- Google Places rating, category, hours, and Maps links on Scout business cards
 - One batched Claude call per completed run for lower matching cost
 - End-of-run save-search prompt with a lightweight local profile
+- Inspection history view for prior runs
 - Manual delete endpoint and 30-day run retention cleanup
+- SMB-facing pages: For Businesses landing, business signup, and per-business detail
+- Privacy Policy and Terms of Service pages linked from a public footer
 
 ## Safety Boundaries
 
@@ -33,7 +40,7 @@ Hire Near does not:
 - crawl off-domain pages
 - store raw HTML or full page text
 
-Website text is used transiently for classification. Persisted evidence is limited to signal labels, classifications, and URLs.
+Website text is used transiently for classification and company profile generation. Persisted evidence is limited to signal labels, classifications, URLs, and structured company profile fields.
 
 Hirenear sends a single notification email to businesses where a candidate scores 80% fit or above, if a contact email was found on their public website. No email is sent more than once per business per scout run.
 
@@ -181,24 +188,42 @@ SSE event names:
 
 ```text
 server/
+  analytics.js          Lightweight event logging
+  budgetGuard.js        Per-run cost and call ceilings
   db.js                 Postgres migrations and query helper
   geoSearch.js          Places and SearchAPI helpers
   index.js              Express API
+  limits.js             Rate and usage limits
+  logger.js             Structured logging
+  notifier.js           Business notification email
   resumeMatcher.js      Claude matching and summary
   scoutRunner.js        Background scout orchestration
   websiteInspector.js   Playwright website classifier
 
 client/src/
   App.jsx
+  constants.js
   components/
     Map.jsx
     SearchPanel.jsx
     ScoutPanel.jsx
     JobList.jsx
+    MatchPages.jsx
+    ForBusinessesPage.jsx
+    BusinessSignupPage.jsx
+    PrivacyPage.jsx
+    TermsPage.jsx
+    PublicFooter.jsx
   hooks/
     useGeoJobs.js
+    useJobs.js
     useScout.js
+    useMediaQuery.js
 ```
+
+## Deployment
+
+The server ships as a container via `Dockerfile` and `cloudbuild.yaml` for Google Cloud Run. The client is configured for Netlify via `netlify.toml`.
 
 ## Verification
 

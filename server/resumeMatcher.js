@@ -6,6 +6,10 @@ import { reserveDailyUsage } from './budgetGuard.js';
 const DEFAULT_MODEL = process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001';
 const MAX_SIGNAL_LABEL_LENGTH = 60;
 const MAX_MATCH_SIGNALS = 6;
+const MAX_PROFILE_BLURB_LENGTH = 140;
+const MAX_PROFILE_FIELD_LENGTH = 80;
+const MAX_PROFILE_SIGNALS = 6;
+const MAX_PROFILE_SERVICES = 4;
 
 let client = null;
 
@@ -40,6 +44,42 @@ function normalizeStringArray(arr, max) {
   return Array.isArray(arr)
     ? [...new Set(arr.filter(s => typeof s === 'string').map(s => s.trim()).filter(Boolean))].slice(0, max)
     : [];
+}
+
+function normalizeProfileString(value, maxLength = MAX_PROFILE_FIELD_LENGTH) {
+  return typeof value === 'string' && value.trim()
+    ? value.trim().replace(/\s+/g, ' ').slice(0, maxLength)
+    : null;
+}
+
+function normalizeProfileArray(arr, max, maxLength = MAX_PROFILE_FIELD_LENGTH) {
+  return Array.isArray(arr)
+    ? [...new Set(arr
+      .filter(item => typeof item === 'string')
+      .map(item => item.trim().replace(/\s+/g, ' '))
+      .filter(Boolean))]
+      .map(item => item.slice(0, maxLength))
+      .slice(0, max)
+    : [];
+}
+
+function normalizeCompanyProfile(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const foundedYear = Number(raw.foundedYear);
+  const profile = {
+    blurb: normalizeProfileString(raw.blurb, MAX_PROFILE_BLURB_LENGTH),
+    foundedYear: Number.isInteger(foundedYear) && foundedYear >= 1600 && foundedYear <= new Date().getFullYear()
+      ? foundedYear
+      : null,
+    sizeCue: normalizeProfileString(raw.sizeCue),
+    industry: normalizeProfileString(raw.industry),
+    signals: normalizeProfileArray(raw.signals, MAX_PROFILE_SIGNALS),
+    services: normalizeProfileArray(raw.services, MAX_PROFILE_SERVICES),
+  };
+  if (!profile.blurb && !profile.foundedYear && !profile.sizeCue && !profile.industry && profile.signals.length === 0 && profile.services.length === 0) {
+    return null;
+  }
+  return profile;
 }
 
 function fallbackSignals(targetLanes = [], options = {}) {
@@ -172,7 +212,7 @@ function clampScore(value) {
   return Math.max(0, Math.min(100, Math.round(score)));
 }
 
-function normalizeMatch(raw) {
+function normalizeMatch(raw, { fallbackCompanyProfile = null } = {}) {
   const fitScore = clampScore(raw.fitScore);
   const matchLevel = raw.matchLevel || (fitScore >= 75 ? 'high' : fitScore >= 45 ? 'medium' : 'low');
   const matchSignals = Array.isArray(raw.signals)
@@ -197,14 +237,15 @@ function normalizeMatch(raw) {
     nextStep: String(raw.nextStep || 'Review the website evidence before contacting this business.').slice(0, 500),
     matchSummary,
     matchSignals,
+    companyProfile: normalizeCompanyProfile(raw.companyProfile) || normalizeCompanyProfile(fallbackCompanyProfile),
     raw,
   };
 }
 
-function normalizeMatchWithIds(raw, ids = {}) {
+function normalizeMatchWithIds(raw, ids = {}, options = {}) {
   return {
     ...ids,
-    ...normalizeMatch(raw),
+    ...normalizeMatch(raw, options),
   };
 }
 
@@ -218,6 +259,37 @@ function parseAvoidTerms(avoidTerms = '') {
 function textIncludesAny(text, terms) {
   const normalized = String(text || '').toLowerCase();
   return terms.some(term => normalized.includes(term));
+}
+
+function parseCity(vicinity = '') {
+  const parts = String(vicinity || '').split(',').map(part => part.trim()).filter(Boolean);
+  return parts.length >= 2 ? parts[parts.length - 2] : parts[0] || null;
+}
+
+function buildHeuristicCompanyProfile(business = {}, opportunities = []) {
+  const type = normalizeProfileString(
+    business.primaryTypeDisplayName ||
+    business.primary_type_display_name ||
+    business.category ||
+    business.industry
+  );
+  const city = parseCity(business.vicinity);
+  const blurb = [type || 'Local business', city ? `in ${city}` : null].filter(Boolean).join(' ');
+  const signals = [
+    ...(business.signalStrength === 'strong' || business.signal_strength === 'strong' ? ['hiring page found'] : []),
+    ...(business.signalStrength === 'weak' || business.signal_strength === 'weak' ? ['contact path found'] : []),
+    ...opportunities
+      .filter(item => item.signalStrength === 'strong' || item.signal_strength === 'strong')
+      .map(item => item.source === 'searchapi' ? 'job listing found' : 'careers link'),
+  ];
+  return normalizeCompanyProfile({
+    blurb: blurb || 'Local business',
+    foundedYear: null,
+    sizeCue: null,
+    industry: type,
+    signals,
+    services: [],
+  });
 }
 
 function heuristicMatch({ business, opportunities, targetLanes = [], avoidTerms = '' }) {
@@ -242,6 +314,7 @@ function heuristicMatch({ business, opportunities, targetLanes = [], avoidTerms 
       : hasWeak
         ? 'Use the contact path only if the business looks relevant after manual review.'
         : 'Skip unless you have a direct lead.',
+    companyProfile: business.companyProfile || business.company_profile || buildHeuristicCompanyProfile(business, opportunities),
   });
 }
 
@@ -283,6 +356,17 @@ function compactBusiness(business, opportunities) {
     website: business.website,
     signalStrength: business.signalStrength || business.signal_strength,
     signalSummary: business.signalSummary || business.signal_summary,
+    primaryTypeDisplayName: business.primaryTypeDisplayName || business.primary_type_display_name || null,
+    businessStatus: business.businessStatus || business.business_status || null,
+    googleMapsUri: business.googleMapsUri || business.google_maps_uri || null,
+    weekdayDescriptions: business.weekdayDescriptions || business.weekday_descriptions || [],
+    existingCompanyProfile: normalizeCompanyProfile(business.companyProfile || business.company_profile),
+    homepageExcerpt: business.companyProfile || business.company_profile
+      ? null
+      : normalizeProfileString(business.homepageExcerpt || business.homepage_excerpt, 900),
+    aboutExcerpt: business.companyProfile || business.company_profile
+      ? null
+      : normalizeProfileString(business.aboutExcerpt || business.about_excerpt, 900),
     evidence: evidence.map(item => ({ label: item.label, url: item.url })).slice(0, 5),
     opportunities: opportunities
       .filter(item => (item.businessId || item.business_id) === business.id)
@@ -305,7 +389,12 @@ function normalizeBatch(raw, businesses, opportunities, targetLanes, avoidTerms)
 
   const businessMatches = (raw.businessMatches || [])
     .filter(item => businessIds.has(item.businessId))
-    .map(item => normalizeMatchWithIds(item, { businessId: item.businessId }));
+    .map(item => {
+      const business = businesses.find(candidate => candidate.id === item.businessId);
+      return normalizeMatchWithIds(item, { businessId: item.businessId }, {
+        fallbackCompanyProfile: business?.companyProfile || business?.company_profile,
+      });
+    });
 
   const opportunityMatches = (raw.opportunityMatches || [])
     .filter(item => opportunityIds.has(item.opportunityId))
@@ -386,19 +475,26 @@ export async function matchScoutRunBatch({ resumeText, targetLanes = [], avoidTe
     reserveDailyUsage('anthropic', { operation: 'batch_match', businessCount: businesses.length });
     const response = await anthropic.messages.create({
       model: DEFAULT_MODEL,
-      max_tokens: 4000,
+      max_tokens: 6000,
       temperature: 0,
-    system: 'You rank local business hiring evidence against a pasted resume. Return only strict JSON.',
-    messages: [{
-      role: 'user',
+      system: 'You rank local business hiring evidence against a pasted resume and profile companies from provided website excerpts. Return only strict JSON.',
+      messages: [{
+        role: 'user',
         content: JSON.stringify({
           task: [
             'Return JSON with keys summary, businessMatches, opportunityMatches.',
             'businessMatches items: businessId, matchLevel low|medium|high, fitScore 0-100, reason, nextStep, summary, signals.',
+            'Each businessMatch must also include companyProfile unless the business has existingCompanyProfile.',
+            'companyProfile shape: {"blurb":"...","foundedYear":1949|null,"sizeCue":"..."|null,"industry":"..."|null,"signals":["..."],"services":["..."]}.',
+            `companyProfile.blurb must be one sentence under ${MAX_PROFILE_BLURB_LENGTH} characters. services max ${MAX_PROFILE_SERVICES}; signals max ${MAX_PROFILE_SIGNALS}.`,
+            'Use only homepageExcerpt and aboutExcerpt for companyProfile. If a field cannot be inferred from those excerpts, return null or an empty array.',
+            'Do not invent founding years, employee counts, awards, services, or industries.',
+            'If existingCompanyProfile is present, set companyProfile to null; the server will reuse the cached profile.',
             'summary must be 1-2 plain-English sentences specific to this candidate and business.',
             `signals must contain 2-${MAX_MATCH_SIGNALS} items with shape {"label":"...","weight":"positive|neutral|negative"} and labels under ${MAX_SIGNAL_LABEL_LENGTH} chars.`,
             'opportunityMatches items: opportunityId, businessId, matchLevel low|medium|high, fitScore 0-100, reason, nextStep.',
             'Do not invent openings. Use only the provided evidence and opportunities.',
+            'Do not use homepageExcerpt or aboutExcerpt to infer openings, hiring signal strength, fitScore, reason, nextStep, summary, or match signals; excerpts are only for companyProfile.',
             'Treat targetLanes as the user intent and heavily penalize roles outside those lanes.',
             'If a role title matches avoidTerms, mark it low fit unless evidence clearly shows a different role.',
             'Keep reasons and nextStep concise.',

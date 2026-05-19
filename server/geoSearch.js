@@ -30,6 +30,20 @@ const MAX_PLACES_TO_SHOW = Number(process.env.MAX_PLACES_TO_SHOW || 20);
 const MAX_COMPANIES_TO_CHECK = Number(process.env.MAX_COMPANIES_TO_CHECK || MAX_PLACES_TO_SHOW);
 const JOB_DISCOVERY_LIMIT = Number(process.env.SCOUT_JOB_DISCOVERY_LIMIT || 12);
 const EMPLOYER_DISCOVERY_LIMIT = Number(process.env.SCOUT_EMPLOYER_DISCOVERY_LIMIT || 16);
+const PLACES_FIELD_MASK = [
+  'places.id',
+  'places.displayName',
+  'places.location',
+  'places.formattedAddress',
+  'places.types',
+  'places.rating',
+  'places.userRatingCount',
+  'places.websiteUri',
+  'places.primaryTypeDisplayName',
+  'places.businessStatus',
+  'places.googleMapsUri',
+  'places.regularOpeningHours.weekdayDescriptions',
+].join(',');
 
 function normalizeCompanyName(name) {
   return name
@@ -113,6 +127,10 @@ function mapPlaceResult(p) {
     rating: p.rating ?? null,
     user_ratings_total: p.userRatingCount ?? 0,
     websiteUri: p.websiteUri ?? null,
+    primaryTypeDisplayName: p.primaryTypeDisplayName?.text || null,
+    businessStatus: p.businessStatus ?? null,
+    googleMapsUri: p.googleMapsUri ?? null,
+    weekdayDescriptions: p.regularOpeningHours?.weekdayDescriptions || [],
   };
 }
 
@@ -138,7 +156,7 @@ export async function fetchNearbyPlaces(lat, lng, radius) {
     headers: {
       'Content-Type': 'application/json',
       'X-Goog-Api-Key': apiKey,
-      'X-Goog-FieldMask': 'places.id,places.displayName,places.location,places.formattedAddress,places.types,places.rating,places.userRatingCount,places.websiteUri',
+      'X-Goog-FieldMask': PLACES_FIELD_MASK,
     },
     body: JSON.stringify(body),
   });
@@ -321,7 +339,7 @@ async function fetchPlacesTextSearch({ query, lat, lng, radius }) {
     headers: {
       'Content-Type': 'application/json',
       'X-Goog-Api-Key': apiKey,
-      'X-Goog-FieldMask': 'places.id,places.displayName,places.location,places.formattedAddress,places.types,places.rating,places.userRatingCount,places.websiteUri',
+      'X-Goog-FieldMask': PLACES_FIELD_MASK,
     },
     body: JSON.stringify(body),
   });
@@ -346,6 +364,10 @@ function jobToCandidate(job, title, lat, lng, locationLabel) {
     rating: null,
     user_ratings_total: 0,
     websiteUri: null,
+    primaryTypeDisplayName: null,
+    businessStatus: null,
+    googleMapsUri: null,
+    weekdayDescriptions: [],
     discoverySource: 'job_search',
     discoveryQuery: `${title} jobs in ${locationLabel}`,
     discoveryScore: 300,
@@ -381,6 +403,12 @@ function mergeCandidate(existing, next) {
   if (!existing.websiteUri && next.websiteUri) existing.websiteUri = next.websiteUri;
   if ((!existing.geometry || !existing.geometry.location) && next.geometry) existing.geometry = next.geometry;
   if (!existing.vicinity && next.vicinity) existing.vicinity = next.vicinity;
+  if (!existing.primaryTypeDisplayName && next.primaryTypeDisplayName) existing.primaryTypeDisplayName = next.primaryTypeDisplayName;
+  if (!existing.businessStatus && next.businessStatus) existing.businessStatus = next.businessStatus;
+  if (!existing.googleMapsUri && next.googleMapsUri) existing.googleMapsUri = next.googleMapsUri;
+  if ((!existing.weekdayDescriptions || existing.weekdayDescriptions.length === 0) && next.weekdayDescriptions) {
+    existing.weekdayDescriptions = next.weekdayDescriptions;
+  }
   if (String(existing.place_id || '').startsWith('job:') && next.place_id && !String(next.place_id).startsWith('job:')) {
     existing.place_id = next.place_id;
   }
@@ -544,6 +572,11 @@ export function createNearbyJobsHandler({ cache, mapboxToken }) {
             website: place.websiteUri ?? null,
             rating: place.rating ?? null,
             userRatingsTotal: place.user_ratings_total ?? 0,
+            userRatingCount: place.user_ratings_total ?? 0,
+            primaryTypeDisplayName: place.primaryTypeDisplayName ?? null,
+            businessStatus: place.businessStatus ?? null,
+            googleMapsUri: place.googleMapsUri ?? null,
+            weekdayDescriptions: place.weekdayDescriptions ?? [],
             jobs,
             hasJobs,
             jobSearchStatus: hasJobs ? 'hiring' : shouldCheckJobs ? 'no_jobs_found' : 'not_checked',

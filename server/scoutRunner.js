@@ -36,10 +36,18 @@ function businessRowToClient(row) {
     vicinity: row.vicinity,
     rating: row.rating,
     userRatingsTotal: row.user_ratings_total,
+    userRatingCount: row.user_ratings_total,
+    primaryTypeDisplayName: row.primary_type_display_name,
+    businessStatus: row.business_status,
+    googleMapsUri: row.google_maps_uri,
+    weekdayDescriptions: row.weekday_descriptions || [],
     website: row.website,
     inspectionStatus: row.inspection_status,
     signalStrength: row.signal_strength,
     signalSummary: row.signal_summary,
+    companyProfile: row.company_profile || null,
+    homepageExcerpt: row.homepage_excerpt || row.homepageExcerpt || null,
+    aboutExcerpt: row.about_excerpt || row.aboutExcerpt || null,
     fitScore: row.fit_score,
     matchSummary: row.match_summary,
     matchSignals: row.match_signals || [],
@@ -212,8 +220,8 @@ async function getFreshInspection(cacheKey) {
 async function saveInspection(runId, cacheKey, placeId, website, inspection) {
   await query(
     `INSERT INTO business_inspections
-      (cache_key, place_id, run_id, domain, website, status, signal_strength, signal_summary, evidence, opportunities, contact_email, error, inspected_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,now())`,
+      (cache_key, place_id, run_id, domain, website, status, signal_strength, signal_summary, evidence, opportunities, company_profile, contact_email, error, inspected_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,now())`,
     [
       cacheKey,
       placeId,
@@ -225,6 +233,7 @@ async function saveInspection(runId, cacheKey, placeId, website, inspection) {
       inspection.signalSummary,
       JSON.stringify(inspection.evidence || []),
       JSON.stringify(inspection.opportunities || []),
+      inspection.companyProfile ? JSON.stringify(inspection.companyProfile) : null,
       inspection.contactEmail || null,
       inspection.error || null,
     ]
@@ -239,6 +248,30 @@ async function saveInspection(runId, cacheKey, placeId, website, inspection) {
     opportunityCount: inspection.opportunities?.length || 0,
     evidenceCount: inspection.evidence?.length || 0,
     contactEmailFound: Boolean(inspection.contactEmail),
+  });
+}
+
+async function persistCompanyProfile({ runId, business, companyProfile }) {
+  if (!companyProfile) return;
+  const website = business.website;
+  const domain = normalizeDomain(website);
+  const cacheKey = domain ? `domain:${domain}` : `place:${business.place_id || business.placeId}`;
+  await query(
+    `UPDATE business_inspections
+     SET company_profile = $2
+     WHERE id = (
+       SELECT id FROM business_inspections
+       WHERE cache_key = $1
+       ORDER BY inspected_at DESC
+       LIMIT 1
+     )`,
+    [cacheKey, JSON.stringify(companyProfile)]
+  );
+  logInfo('company_profile_recorded', {
+    runId,
+    businessId: business.id,
+    cacheKey,
+    hasBlurb: Boolean(companyProfile.blurb),
   });
 }
 
@@ -360,6 +393,7 @@ async function inspectBusiness({ run, business, cache }) {
       signalSummary: cached.signal_summary,
       evidence: cached.evidence || [],
       opportunities: cached.opportunities || [],
+      companyProfile: cached.company_profile || null,
       contactEmail: cached.contact_email || null,
       error: cached.error,
     };
@@ -396,7 +430,7 @@ async function inspectBusiness({ run, business, cache }) {
   await query(
     `UPDATE scout_businesses
      SET inspection_status = $2, signal_strength = $3, signal_summary = $4, evidence = $5,
-         contact_email = $6, updated_at = now()
+         contact_email = $6, company_profile = COALESCE($7, company_profile), updated_at = now()
      WHERE id = $1`,
     [
       business.id,
@@ -405,6 +439,7 @@ async function inspectBusiness({ run, business, cache }) {
       inspection.signalSummary,
       JSON.stringify(inspection.evidence || []),
       inspection.contactEmail || null,
+      inspection.companyProfile ? JSON.stringify(inspection.companyProfile) : null,
     ]
   );
 
@@ -422,6 +457,7 @@ async function inspectBusiness({ run, business, cache }) {
     durationMs: Date.now() - startedAt,
   });
   emitRun(run.id, 'business_update', { business: businessRowToClient(updatedBusiness.rows[0]) });
+  return inspection;
 }
 
 async function applyBatchMatches(run, businesses, opportunities) {
@@ -439,6 +475,7 @@ async function applyBatchMatches(run, businesses, opportunities) {
     opportunities: opportunities.map(opportunityRowToClient),
   });
 
+  const businessById = new Map(businesses.map(business => [business.id, business]));
   for (const match of batch.businessMatches) {
     const row = await insertMatch({
       runId: run.id,
@@ -449,7 +486,8 @@ async function applyBatchMatches(run, businesses, opportunities) {
 
     const updateResult = await query(
       `UPDATE scout_businesses
-       SET fit_score = $2, fit_reason = $3, next_step = $4, match_summary = $5, match_signals = $6, updated_at = now()
+       SET fit_score = $2, fit_reason = $3, next_step = $4, match_summary = $5, match_signals = $6,
+           company_profile = COALESCE($7, company_profile), updated_at = now()
        WHERE id = $1
          AND (fit_score IS NULL OR $2 >= fit_score)
        RETURNING *`,
@@ -460,10 +498,11 @@ async function applyBatchMatches(run, businesses, opportunities) {
         match.nextStep,
         match.matchSummary || null,
         JSON.stringify(match.matchSignals || []),
+        match.companyProfile ? JSON.stringify(match.companyProfile) : null,
       ]
     );
 
-    const updatedBusinessRow = updateResult.rows[0] || (await query('SELECT * FROM scout_businesses WHERE id = $1', [match.businessId])).rows[0];
+    let updatedBusinessRow = updateResult.rows[0] || (await query('SELECT * FROM scout_businesses WHERE id = $1', [match.businessId])).rows[0];
     if (!updatedBusinessRow) {
       logWarn('batch_match_missing_business_row', { runId: run.id, businessId: match.businessId });
       continue;
@@ -475,6 +514,23 @@ async function applyBatchMatches(run, businesses, opportunities) {
         existingFitScore: updatedBusinessRow.fit_score,
         attemptedFitScore: match.fitScore,
         matchLevel: match.matchLevel,
+      });
+    }
+    if (match.companyProfile) {
+      if (!updatedBusinessRow.company_profile) {
+        const profileUpdate = await query(
+          `UPDATE scout_businesses
+           SET company_profile = $2, updated_at = now()
+           WHERE id = $1
+           RETURNING *`,
+          [match.businessId, JSON.stringify(match.companyProfile)]
+        );
+        updatedBusinessRow = profileUpdate.rows[0] || updatedBusinessRow;
+      }
+      await persistCompanyProfile({
+        runId: run.id,
+        business: businessById.get(match.businessId) || updatedBusinessRow,
+        companyProfile: match.companyProfile,
       });
     }
     notifyBusinessIfQualified(updatedBusinessRow).catch(err => {
@@ -489,7 +545,11 @@ async function applyBatchMatches(run, businesses, opportunities) {
       hasSummary: Boolean(match.matchSummary),
     });
     emitRun(run.id, 'business_update', { business: businessRowToClient(updatedBusinessRow) });
-    emitRun(run.id, 'match_update', { match: matchRowToClient(row) });
+    emitRun(run.id, 'match_update', {
+      match: matchRowToClient(row),
+      business: businessRowToClient(updatedBusinessRow),
+      companyProfile: updatedBusinessRow.company_profile || match.companyProfile || null,
+    });
   }
 
   for (const match of batch.opportunityMatches) {
@@ -545,10 +605,18 @@ export async function runScout(runId, cache) {
       const id = randomUUID();
       const row = await query(
         `INSERT INTO scout_businesses
-          (id, run_id, place_id, name, lat, lng, vicinity, rating, user_ratings_total, website,
+          (id, run_id, place_id, name, lat, lng, vicinity, rating, user_ratings_total,
+           primary_type_display_name, business_status, google_maps_uri, weekday_descriptions, website,
            signal_strength, signal_summary, discovery_source, discovery_query, discovery_score)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
          ON CONFLICT (run_id, place_id) DO UPDATE SET
+           rating = EXCLUDED.rating,
+           user_ratings_total = EXCLUDED.user_ratings_total,
+           primary_type_display_name = EXCLUDED.primary_type_display_name,
+           business_status = EXCLUDED.business_status,
+           google_maps_uri = EXCLUDED.google_maps_uri,
+           weekday_descriptions = EXCLUDED.weekday_descriptions,
+           website = COALESCE(EXCLUDED.website, scout_businesses.website),
            signal_strength = CASE
              WHEN EXCLUDED.signal_strength = 'strong' THEN EXCLUDED.signal_strength
              ELSE scout_businesses.signal_strength
@@ -569,6 +637,10 @@ export async function runScout(runId, cache) {
           place.vicinity || null,
           place.rating,
           place.user_ratings_total || 0,
+          place.primaryTypeDisplayName || null,
+          place.businessStatus || null,
+          place.googleMapsUri || null,
+          JSON.stringify(place.weekdayDescriptions || []),
           place.websiteUri || null,
           (place.initialOpportunities || []).length > 0 ? 'strong' : 'queued',
           (place.initialOpportunities || []).length > 0
@@ -621,7 +693,7 @@ export async function visitBusiness(runId, placeId, cache) {
       return;
     }
 
-    await inspectBusiness({ run, business, cache });
+    const inspection = await inspectBusiness({ run, business, cache });
 
     // Match resume against this single business immediately after inspection
     const [updatedBiz, allOpportunities] = await Promise.all([
@@ -629,7 +701,14 @@ export async function visitBusiness(runId, placeId, cache) {
       query('SELECT * FROM scout_opportunities WHERE business_id = $1', [business.id]),
     ]);
 
-    await applyBatchMatches(run, updatedBiz.rows, allOpportunities.rows);
+    const businessesForMatch = updatedBiz.rows.map(row => ({
+      ...row,
+      homepage_excerpt: inspection?.homepageExcerpt || null,
+      about_excerpt: inspection?.aboutExcerpt || null,
+      company_profile: row.company_profile || inspection?.companyProfile || null,
+    }));
+
+    await applyBatchMatches(run, businessesForMatch, allOpportunities.rows);
 
     // Check if all visited businesses are done, emit complete if so
     await maybeComplete(run);

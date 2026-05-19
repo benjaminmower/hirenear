@@ -12,6 +12,7 @@ const RADII = [
 const SETUP_STEPS = ['area', 'resume', 'lanes', 'launch'];
 const INTEREST_THRESHOLD = 80;
 const MAX_MATCH_SIGNALS = 6;
+const SWIPE_THRESHOLD_PX = 96;
 
 const STEP_META = {
   area: {
@@ -161,6 +162,46 @@ function queueSummary(queuedBusinesses) {
   return `${queuedBusinesses.length} door${queuedBusinesses.length === 1 ? '' : 's'} in queue`;
 }
 
+function socialLabel(url) {
+  let hostname = '';
+  try {
+    hostname = new URL(url).hostname.replace(/^www\./, '').toLowerCase();
+  } catch {
+    return null;
+  }
+  if (hostname.includes('linkedin.com')) return 'LinkedIn';
+  if (hostname.includes('instagram.com')) return 'Instagram';
+  if (hostname.includes('facebook.com')) return 'Facebook';
+  if (hostname === 'x.com' || hostname.includes('twitter.com')) return 'X';
+  if (hostname.includes('tiktok.com')) return 'TikTok';
+  if (hostname.includes('youtube.com')) return 'YouTube';
+  return null;
+}
+
+function previewLinksForBusiness(business, businessOpportunities = []) {
+  const links = [];
+  const seen = new Set();
+  const addLink = (label, url) => {
+    if (!url || seen.has(url)) return;
+    seen.add(url);
+    links.push({ label, url });
+  };
+
+  if (business.website) addLink(socialLabel(business.website) || 'Website', business.website);
+  if (business.googleMapsUri) addLink('Maps', business.googleMapsUri);
+
+  const relatedUrls = [
+    ...(business.evidence || []).map(item => item.url),
+    ...businessOpportunities.map(item => item.url),
+  ];
+  for (const url of relatedUrls) {
+    const label = socialLabel(url);
+    if (label) addLink(label, url);
+  }
+
+  return links;
+}
+
 function bestBusinessLink(business, opportunities) {
   const websiteOpportunity = opportunities.find(item => item.source === 'website' && item.url);
   const anyOpportunity = opportunities.find(item => item.url);
@@ -227,6 +268,7 @@ export default function ScoutPanel({
   const [interestError, setInterestError] = useState('');
   const [reportDismissedRunId, setReportDismissedRunId] = useState(null);
   const [expandedProfiles, setExpandedProfiles] = useState({});
+  const [swipeDrag, setSwipeDrag] = useState({ businessId: null, startX: 0, currentX: 0 });
   const [profile, setProfile] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem('hirenear:userProfile') || '{}');
@@ -257,6 +299,8 @@ export default function ScoutPanel({
   // The one currently being inspected (checking state)
   const checkingBusiness = businesses.find(b => b.inspectionStatus === 'checking') ?? null;
   const activeBusiness = checkingBusiness || nextBusiness;
+  const activeBusinessOpportunities = activeBusiness ? opportunities.filter(item => item.businessId === activeBusiness.id) : [];
+  const activePreviewLinks = activeBusiness ? previewLinksForBusiness(activeBusiness, activeBusinessOpportunities) : [];
 
   const hasRun = !!scout.run?.id;
   const isDiscovering = scout.loading && businesses.length === 0;
@@ -275,6 +319,11 @@ export default function ScoutPanel({
     ...styles[key],
     ...(isMobile && mobileStyles[key] ? mobileStyles[key] : {}),
   }), [isMobile]);
+  const activeSwipeOffset = !checkingBusiness && activeBusiness && swipeDrag.businessId === activeBusiness.id
+    ? swipeDrag.currentX - swipeDrag.startX
+    : 0;
+  const swipeTilt = Math.max(-12, Math.min(12, activeSwipeOffset / 12));
+  const swipeIntent = activeSwipeOffset > 24 ? 'match' : activeSwipeOffset < -24 ? 'skip' : null;
 
   useEffect(() => {
     if (!scout.run) return;
@@ -290,7 +339,12 @@ export default function ScoutPanel({
     setInterestError('');
     setReportDismissedRunId(null);
     setExpandedProfiles({});
+    setSwipeDrag({ businessId: null, startX: 0, currentX: 0 });
   }, [scout.run?.id]);
+
+  useEffect(() => {
+    setSwipeDrag({ businessId: null, startX: 0, currentX: 0 });
+  }, [activeBusiness?.id]);
 
   const handleStart = () => {
     if (!searchPin) return;
@@ -395,6 +449,32 @@ export default function ScoutPanel({
     await scout.skipBusiness(business.placeId);
   }, [scout]);
 
+  const handleSwipeStart = useCallback((event, business) => {
+    if (!business || checkingBusiness || visiting) return;
+    if (event.target.closest?.('button, a')) return;
+    setSwipeDrag({ businessId: business.id, startX: event.clientX, currentX: event.clientX });
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  }, [checkingBusiness, visiting]);
+
+  const handleSwipeMove = useCallback((event) => {
+    setSwipeDrag(current => {
+      if (!current.businessId) return current;
+      return { ...current, currentX: event.clientX };
+    });
+  }, []);
+
+  const handleSwipeEnd = useCallback((business) => {
+    if (!business || swipeDrag.businessId !== business.id) return;
+    const offset = swipeDrag.currentX - swipeDrag.startX;
+    setSwipeDrag({ businessId: null, startX: 0, currentX: 0 });
+    if (Math.abs(offset) < SWIPE_THRESHOLD_PX) return;
+    if (offset > 0) {
+      handleVisit(business);
+    } else {
+      handleSkip(business);
+    }
+  }, [handleSkip, handleVisit, swipeDrag]);
+
   const toggleBusinessProfile = useCallback((businessId) => {
     setExpandedProfiles(current => ({ ...current, [businessId]: !current[businessId] }));
   }, []);
@@ -476,7 +556,7 @@ export default function ScoutPanel({
                 </div>
                 <div style={styles.marketNote}>
                   <strong style={styles.marketNoteTitle}>Human-paced</strong>
-                  <span>No website is checked until you choose to visit.</span>
+                  <span>No website is checked until you ask Hire Near to match you.</span>
                 </div>
               </div>
             </>
@@ -675,7 +755,7 @@ export default function ScoutPanel({
           {searchPin ? `${displayLocationLabel}: ${searchPin.lat.toFixed(4)}, ${searchPin.lng.toFixed(4)}` : 'Click the map to drop a scout pin.'}
         </div>
         <div style={styles.notice}>
-          Resume text is sent to this server and Claude's API for matching. Hire Near checks public business websites only after you click Visit, stores hiring classifications and evidence URLs, and deletes scout runs after 30 days.
+          Resume text is sent to this server and Claude's API for matching. Hire Near checks public business websites only after you click Match us, stores hiring classifications and evidence URLs, and deletes scout runs after 30 days.
         </div>
         {scout.error && <div style={styles.error}>{scout.error}</div>}
         {hasRun && (
@@ -690,7 +770,7 @@ export default function ScoutPanel({
         <div style={sx('stats')}>
           <span>{businesses.length} places</span>
           <span>{queuedBusinesses.length} queued</span>
-          <span>{visitedCount} visited</span>
+          <span>{visitedCount} matched</span>
           <span>{skippedCount} skipped</span>
           <span>{strongCount} strong</span>
         </div>
@@ -698,20 +778,60 @@ export default function ScoutPanel({
 
       {/* Game mechanic: Next Stop card */}
       {isRunning && activeBusiness && (
-        <div style={sx('nextStop')}>
+        <div
+          style={{
+            ...sx('nextStop'),
+            ...(!checkingBusiness ? styles.swipeDeckCard : {}),
+            transform: !checkingBusiness ? `translateX(${activeSwipeOffset}px) rotate(${swipeTilt}deg)` : undefined,
+            transition: swipeDrag.businessId === activeBusiness.id ? 'none' : 'transform 180ms ease, border-color 180ms ease',
+            borderColor: swipeIntent === 'match' ? '#18794e' : swipeIntent === 'skip' ? '#b42318' : sx('nextStop').borderColor,
+          }}
+          onPointerDown={event => handleSwipeStart(event, activeBusiness)}
+          onPointerMove={handleSwipeMove}
+          onPointerUp={() => handleSwipeEnd(activeBusiness)}
+          onPointerCancel={() => setSwipeDrag({ businessId: null, startX: 0, currentX: 0 })}
+        >
+          {!checkingBusiness && (
+            <div style={styles.swipeHintRow}>
+              <span style={{ ...styles.swipeHint, ...(swipeIntent === 'skip' ? styles.swipeHintSkipActive : {}) }}>← Skip</span>
+              <span style={styles.swipeHintText}>Swipe or choose</span>
+              <span style={{ ...styles.swipeHint, ...(swipeIntent === 'match' ? styles.swipeHintMatchActive : {}) }}>Match us →</span>
+            </div>
+          )}
           <div style={styles.nextStopLabel}>
-            {checkingBusiness ? 'Inspecting website' : 'Next stop'}
+            {checkingBusiness ? 'Matching you' : 'Next door'}
           </div>
           <div style={styles.nextStopQueueMeta}>
             {queueSummary(checkingBusiness ? [checkingBusiness, ...queuedBusinesses] : queuedBusinesses)}
           </div>
+          {!checkingBusiness && (
+            <div style={styles.nextStopInsight}>
+              <span style={{ ...styles.queueBand, ...queueBandStyle(activeBusiness.discoveryScore) }}>
+                {queueLeadBand(activeBusiness.discoveryScore)}
+              </span>
+              <span style={styles.nextStopReason}>{whyQueued(activeBusiness, activeBusinessOpportunities)}</span>
+            </div>
+          )}
           <div style={styles.nextStopName}>{activeBusiness.name}</div>
           {(activeBusiness.primaryTypeDisplayName || activeBusiness.category) && (
             <div style={styles.nextStopCategory}>{activeBusiness.primaryTypeDisplayName || activeBusiness.category}</div>
           )}
           <div style={styles.nextStopMeta}>{activeBusiness.vicinity}</div>
-          {activeBusiness.website && (
-            <div style={styles.nextStopWebsite}>{activeBusiness.website.replace(/^https?:\/\//, '')}</div>
+          {activePreviewLinks.length > 0 && (
+            <div style={styles.previewLinks} aria-label="Preview links">
+              {activePreviewLinks.map(link => (
+                <a
+                  key={`${activeBusiness.id}:${link.label}:${link.url}`}
+                  style={styles.previewLink}
+                  href={link.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={event => event.stopPropagation()}
+                >
+                  {link.label}
+                </a>
+              ))}
+            </div>
           )}
           {checkingBusiness ? (
             <div style={styles.checking}>
@@ -726,7 +846,7 @@ export default function ScoutPanel({
                 onClick={() => handleVisit(nextBusiness)}
                 disabled={visiting}
               >
-                {visiting ? 'Visiting...' : 'Visit'}
+                {visiting ? 'Matching...' : 'Match us'}
               </button>
               <button
                 type="button"
@@ -741,7 +861,7 @@ export default function ScoutPanel({
         </div>
       )}
 
-      {/* All queued done, no more to visit */}
+      {/* All queued done, no more to match */}
       {isRunning && !activeBusiness && !complete && (
         <div style={styles.allDonePrompt}>
           Walk complete. Building ranked report...
@@ -752,7 +872,7 @@ export default function ScoutPanel({
         <div style={sx('reportLauncher')}>
           <div>
             <div style={styles.reportLauncherTitle}>Scout report ready</div>
-            <div style={styles.reportLauncherMeta}>{visitedCount} visited · {highFitBusinesses.length} top fits</div>
+            <div style={styles.reportLauncherMeta}>{visitedCount} matched · {highFitBusinesses.length} top fits</div>
           </div>
           <button
             type="button"
@@ -770,81 +890,8 @@ export default function ScoutPanel({
         </div>
       )}
 
-      {/* Visited/decided businesses log */}
+      {/* Matched/decided businesses log */}
       <div style={sx('list')}>
-        {isRunning && queuedBusinesses.length > 0 && (
-          <div style={styles.queueSection}>
-            <div style={sx('queueSectionHeader')}>
-              <div>
-                <div style={styles.eyebrow}>Street queue</div>
-                <div style={styles.queueTitle}>Doors worth opening</div>
-              </div>
-              <div style={styles.queueCount}>{queuedBusinesses.length} queued</div>
-            </div>
-            <div style={styles.queueCards}>
-              {queuedBusinesses.map((business, index) => {
-                const businessOpportunities = opportunities.filter(item => item.businessId === business.id);
-                const selected = selectedBusiness?.id === business.id;
-                const placeMeta = businessPlaceMeta(business);
-                return (
-                  <div
-                    key={business.id}
-                    style={{ ...styles.queueCard, ...(selected ? styles.cardSelected : {}) }}
-                    onClick={() => onSelectBusiness(selected ? null : business)}
-                  >
-                    <div style={sx('queueCardHeader')}>
-                      <div style={styles.queueRank}>{index + 1}</div>
-                      <div style={styles.queueCardTitleBlock}>
-                        <div style={styles.queueCardTitle}>{business.name}</div>
-                        {placeMeta && <div style={styles.queueCardMeta}>{placeMeta}</div>}
-                      </div>
-                      <span style={{ ...styles.queueBand, ...queueBandStyle(business.discoveryScore) }}>
-                        {queueLeadBand(business.discoveryScore)}
-                      </span>
-                    </div>
-                    {business.vicinity && <div style={styles.queueVicinity}>{business.vicinity}</div>}
-                    <div style={styles.queueWhy}>{whyQueued(business, businessOpportunities)}</div>
-                    {business.website && (
-                      <a
-                        style={styles.queueWebsite}
-                        href={business.website}
-                        target="_blank"
-                        rel="noreferrer"
-                        onClick={event => event.stopPropagation()}
-                      >
-                        {String(business.website).replace(/^https?:\/\//, '').replace(/\/$/, '')}
-                      </a>
-                    )}
-                    <div style={styles.queueActions}>
-                      <button
-                        type="button"
-                        style={styles.queueVisitButton}
-                        onClick={event => {
-                          event.stopPropagation();
-                          handleVisit(business);
-                        }}
-                        disabled={visiting}
-                      >
-                        {visiting ? 'Visiting...' : 'Visit'}
-                      </button>
-                      <button
-                        type="button"
-                        style={styles.queueSkipButton}
-                        onClick={event => {
-                          event.stopPropagation();
-                          handleSkip(business);
-                        }}
-                        disabled={visiting}
-                      >
-                        Skip
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
         {decidedBusinesses.length === 0 && !isRunning && (
           <div style={styles.empty}>Drop a pin, paste a resume, choose up to 3 lanes, then start walking nearby businesses.</div>
         )}
@@ -996,7 +1043,7 @@ export default function ScoutPanel({
 
             <div style={sx('reportStats')}>
               <div style={styles.reportStat}><strong>{businesses.length}</strong><span>places</span></div>
-              <div style={styles.reportStat}><strong>{visitedCount}</strong><span>visited</span></div>
+              <div style={styles.reportStat}><strong>{visitedCount}</strong><span>matched</span></div>
               <div style={styles.reportStat}><strong>{strongCount}</strong><span>signals</span></div>
               <div style={styles.reportStat}><strong>{highFitBusinesses.length}</strong><span>top fits</span></div>
             </div>
@@ -1681,68 +1728,6 @@ const styles = {
     flexShrink: 0,
   },
   list: { overflowY: 'auto', flex: 1, padding: '10px 12px 16px', background: '#f7f8f5' },
-  queueSection: {
-    marginBottom: 14,
-    paddingBottom: 4,
-    borderBottom: '1px solid #d9d3c9',
-  },
-  queueSectionHeader: {
-    display: 'flex',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: 12,
-    margin: '2px 2px 10px',
-  },
-  queueTitle: {
-    color: '#182033',
-    fontSize: 15,
-    fontWeight: 800,
-    lineHeight: 1.2,
-  },
-  queueCount: {
-    color: '#6f5f4c',
-    background: '#ffffff',
-    border: '1px solid #d9d3c9',
-    borderRadius: 999,
-    padding: '4px 8px',
-    fontSize: 11,
-    fontWeight: 800,
-    flexShrink: 0,
-  },
-  queueCards: {
-    display: 'grid',
-    gridTemplateColumns: '1fr',
-    gap: 10,
-  },
-  queueCard: {
-    padding: 14,
-    border: '1px solid #d9d3c9',
-    borderRadius: 6,
-    background: '#ffffff',
-    cursor: 'pointer',
-    boxShadow: '0 8px 24px rgba(24, 32, 51, 0.06)',
-  },
-  queueCardHeader: {
-    display: 'flex',
-    alignItems: 'flex-start',
-    gap: 10,
-  },
-  queueRank: {
-    width: 26,
-    height: 26,
-    borderRadius: 4,
-    background: '#f0e6dc',
-    color: '#6f5f4c',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontSize: 12,
-    fontWeight: 800,
-    flexShrink: 0,
-  },
-  queueCardTitleBlock: { flex: 1, minWidth: 0 },
-  queueCardTitle: { color: '#182033', fontSize: 14, fontWeight: 800, lineHeight: 1.3 },
-  queueCardMeta: { color: '#4d5665', fontSize: 11, lineHeight: 1.35, marginTop: 3 },
   queueBand: {
     borderRadius: 4,
     padding: '3px 7px',
@@ -1754,53 +1739,22 @@ const styles = {
   queueBandStrong: { background: '#e5f4ec', color: '#18794e' },
   queueBandMedium: { background: '#fff4d6', color: '#936d10' },
   queueBandLow: { background: '#f0e6dc', color: '#6f5f4c' },
-  queueVicinity: { color: '#6f5f4c', fontSize: 12, lineHeight: 1.35, marginTop: 9 },
-  queueWhy: {
-    color: '#182033',
-    background: '#f7f8f5',
-    border: '1px solid #ece5dc',
-    borderRadius: 4,
-    padding: '7px 8px',
-    fontSize: 12,
-    lineHeight: 1.4,
+  previewLinks: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: 7,
     marginTop: 10,
   },
-  queueWebsite: {
-    display: 'inline-block',
+  previewLink: {
     color: '#255e91',
-    fontSize: 12,
+    background: '#e6eef7',
+    border: '1px solid #c4d7e8',
+    borderRadius: 999,
+    padding: '5px 9px',
+    fontSize: 11,
     fontWeight: 800,
+    lineHeight: 1,
     textDecoration: 'none',
-    marginTop: 9,
-    maxWidth: '100%',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-  },
-  queueActions: { display: 'flex', gap: 8, marginTop: 12 },
-  queueVisitButton: {
-    flex: 1,
-    background: '#182033',
-    border: 'none',
-    borderRadius: 4,
-    color: '#ffffff',
-    padding: '9px 11px',
-    font: 'inherit',
-    fontSize: 12,
-    fontWeight: 800,
-    cursor: 'pointer',
-  },
-  queueSkipButton: {
-    flex: 1,
-    background: '#ffffff',
-    border: '1px solid #d9d3c9',
-    borderRadius: 4,
-    color: '#6f5f4c',
-    padding: '9px 11px',
-    font: 'inherit',
-    fontSize: 12,
-    fontWeight: 800,
-    cursor: 'pointer',
   },
   empty: {
     margin: 10,
@@ -1932,6 +1886,45 @@ const styles = {
     background: '#ffffff',
     boxShadow: '0 12px 34px rgba(24, 32, 51, 0.08)',
   },
+  swipeDeckCard: {
+    cursor: 'grab',
+    touchAction: 'pan-y',
+    userSelect: 'none',
+    transformOrigin: '50% 85%',
+  },
+  swipeHintRow: {
+    display: 'grid',
+    gridTemplateColumns: '1fr auto 1fr',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 10,
+  },
+  swipeHint: {
+    border: '1px solid #d9d3c9',
+    borderRadius: 999,
+    color: '#8b8173',
+    background: '#ffffff',
+    padding: '4px 8px',
+    fontSize: 10,
+    fontWeight: 800,
+    textAlign: 'center',
+  },
+  swipeHintText: {
+    color: '#8b8173',
+    fontSize: 10,
+    fontWeight: 800,
+    textTransform: 'uppercase',
+  },
+  swipeHintMatchActive: {
+    borderColor: '#18794e',
+    background: '#e5f4ec',
+    color: '#18794e',
+  },
+  swipeHintSkipActive: {
+    borderColor: '#b42318',
+    background: '#fee4e2',
+    color: '#b42318',
+  },
   nextStopLabel: { fontSize: 11, color: '#8b8173', marginBottom: 8, textTransform: 'uppercase', fontWeight: 800 },
   nextStopQueueMeta: {
     color: '#6f5f4c',
@@ -1944,6 +1937,24 @@ const styles = {
     fontWeight: 800,
     marginBottom: 10,
   },
+  nextStopInsight: {
+    display: 'flex',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+    background: '#f7f8f5',
+    border: '1px solid #ece5dc',
+    borderRadius: 6,
+    padding: '8px 9px',
+    marginBottom: 12,
+  },
+  nextStopReason: {
+    color: '#4d5665',
+    fontSize: 12,
+    lineHeight: 1.35,
+    flex: 1,
+    minWidth: 160,
+  },
   nextStopName: {
     fontFamily: 'Georgia, "Times New Roman", serif',
     fontSize: 24,
@@ -1954,7 +1965,6 @@ const styles = {
   },
   nextStopCategory: { fontSize: 12, color: '#b56d2a', marginBottom: 8, fontWeight: 800 },
   nextStopMeta: { fontSize: 13, color: '#4d5665', marginBottom: 8 },
-  nextStopWebsite: { fontSize: 12, color: '#255e91', marginBottom: 14 },
   nextStopActions: { display: 'flex', gap: 8 },
   visitButton: {
     flex: 1,
@@ -2294,15 +2304,6 @@ const mobileStyles = {
   list: {
     margin: '0 -12px',
     padding: '10px 12px 88px',
-  },
-  queueSectionHeader: {
-    alignItems: 'stretch',
-    flexDirection: 'column',
-    gap: 8,
-  },
-  queueCardHeader: {
-    flexWrap: 'wrap',
-    gap: 10,
   },
   cardHeader: {
     flexDirection: 'column',

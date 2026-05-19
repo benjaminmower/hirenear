@@ -130,7 +130,11 @@ export function useScout() {
 
   const visitBusiness = useCallback(async (placeId) => {
     if (!run?.id) return;
-    await fetch(`/api/scout-runs/${run.id}/visit/${placeId}`, { method: 'POST' });
+    const res = await fetch(`/api/scout-runs/${run.id}/visit/${placeId}`, { method: 'POST' });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || 'Failed to match business');
+    }
   }, [run]);
 
   const skipBusiness = useCallback(async (placeId) => {

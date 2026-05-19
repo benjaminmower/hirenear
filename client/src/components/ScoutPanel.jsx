@@ -259,7 +259,7 @@ export default function ScoutPanel({
   const [resumeText, setResumeText] = useState(scout.run?.resumeText || '');
   const [targetLanes, setTargetLanes] = useState(scout.run?.targetLanes || []);
   const [avoidTerms, setAvoidTerms] = useState(scout.run?.avoidTerms || '');
-  const [visiting, setVisiting] = useState(false);
+  const [matchingPlaceId, setMatchingPlaceId] = useState(null);
   const [setupStep, setSetupStep] = useState('area');
   const [interestEmail, setInterestEmail] = useState('');
   const [interestSubmitting, setInterestSubmitting] = useState(false);
@@ -301,6 +301,10 @@ export default function ScoutPanel({
   const activeBusiness = checkingBusiness || nextBusiness;
   const activeBusinessOpportunities = activeBusiness ? opportunities.filter(item => item.businessId === activeBusiness.id) : [];
   const activePreviewLinks = activeBusiness ? previewLinksForBusiness(activeBusiness, activeBusinessOpportunities) : [];
+  const pendingMatchActive = Boolean(matchingPlaceId && activeBusiness?.placeId === matchingPlaceId);
+  const activeMatching = Boolean(checkingBusiness || pendingMatchActive);
+  const activeProgressBusiness = scout.currentInspectionBusiness || (pendingMatchActive ? activeBusiness : null);
+  const activeProgressSteps = scout.inspectionSteps.length ? scout.inspectionSteps : ['Starting match...'];
 
   const hasRun = !!scout.run?.id;
   const isDiscovering = scout.loading && businesses.length === 0;
@@ -319,7 +323,7 @@ export default function ScoutPanel({
     ...styles[key],
     ...(isMobile && mobileStyles[key] ? mobileStyles[key] : {}),
   }), [isMobile]);
-  const activeSwipeOffset = !checkingBusiness && activeBusiness && swipeDrag.businessId === activeBusiness.id
+  const activeSwipeOffset = !activeMatching && activeBusiness && swipeDrag.businessId === activeBusiness.id
     ? swipeDrag.currentX - swipeDrag.startX
     : 0;
   const swipeTilt = Math.max(-12, Math.min(12, activeSwipeOffset / 12));
@@ -339,12 +343,20 @@ export default function ScoutPanel({
     setInterestError('');
     setReportDismissedRunId(null);
     setExpandedProfiles({});
+    setMatchingPlaceId(null);
     setSwipeDrag({ businessId: null, startX: 0, currentX: 0 });
   }, [scout.run?.id]);
 
   useEffect(() => {
     setSwipeDrag({ businessId: null, startX: 0, currentX: 0 });
   }, [activeBusiness?.id]);
+
+  useEffect(() => {
+    if (!matchingPlaceId) return;
+    const matchingBusiness = businesses.find(item => item.placeId === matchingPlaceId);
+    if (matchingBusiness && ['queued', 'checking'].includes(matchingBusiness.inspectionStatus)) return;
+    setMatchingPlaceId(null);
+  }, [businesses, matchingPlaceId]);
 
   const handleStart = () => {
     if (!searchPin) return;
@@ -440,21 +452,26 @@ export default function ScoutPanel({
   }, [interestResult]);
 
   const handleVisit = useCallback(async (business) => {
-    setVisiting(true);
-    await scout.visitBusiness(business.placeId);
-    setVisiting(false);
-  }, [scout]);
+    if (!business?.placeId || matchingPlaceId || checkingBusiness) return;
+    setMatchingPlaceId(business.placeId);
+    try {
+      await scout.visitBusiness(business.placeId);
+    } catch (err) {
+      console.error(err);
+      setMatchingPlaceId(null);
+    }
+  }, [checkingBusiness, matchingPlaceId, scout]);
 
   const handleSkip = useCallback(async (business) => {
     await scout.skipBusiness(business.placeId);
   }, [scout]);
 
   const handleSwipeStart = useCallback((event, business) => {
-    if (!business || checkingBusiness || visiting) return;
+    if (!business || activeMatching) return;
     if (event.target.closest?.('button, a')) return;
     setSwipeDrag({ businessId: business.id, startX: event.clientX, currentX: event.clientX });
     event.currentTarget.setPointerCapture?.(event.pointerId);
-  }, [checkingBusiness, visiting]);
+  }, [activeMatching]);
 
   const handleSwipeMove = useCallback((event) => {
     setSwipeDrag(current => {
@@ -781,8 +798,8 @@ export default function ScoutPanel({
         <div
           style={{
             ...sx('nextStop'),
-            ...(!checkingBusiness ? styles.swipeDeckCard : {}),
-            transform: !checkingBusiness ? `translateX(${activeSwipeOffset}px) rotate(${swipeTilt}deg)` : undefined,
+            ...(!activeMatching ? styles.swipeDeckCard : {}),
+            transform: !activeMatching ? `translateX(${activeSwipeOffset}px) rotate(${swipeTilt}deg)` : undefined,
             transition: swipeDrag.businessId === activeBusiness.id ? 'none' : 'transform 180ms ease, border-color 180ms ease',
             borderColor: swipeIntent === 'match' ? '#18794e' : swipeIntent === 'skip' ? '#b42318' : sx('nextStop').borderColor,
           }}
@@ -791,7 +808,7 @@ export default function ScoutPanel({
           onPointerUp={() => handleSwipeEnd(activeBusiness)}
           onPointerCancel={() => setSwipeDrag({ businessId: null, startX: 0, currentX: 0 })}
         >
-          {!checkingBusiness && (
+          {!activeMatching && (
             <div style={styles.swipeHintRow}>
               <span style={{ ...styles.swipeHint, ...(swipeIntent === 'skip' ? styles.swipeHintSkipActive : {}) }}>← Skip</span>
               <span style={styles.swipeHintText}>Swipe or choose</span>
@@ -799,12 +816,12 @@ export default function ScoutPanel({
             </div>
           )}
           <div style={styles.nextStopLabel}>
-            {checkingBusiness ? 'Matching you' : 'Next door'}
+            {activeMatching ? 'Matching you' : 'Next door'}
           </div>
           <div style={styles.nextStopQueueMeta}>
             {queueSummary(checkingBusiness ? [checkingBusiness, ...queuedBusinesses] : queuedBusinesses)}
           </div>
-          {!checkingBusiness && (
+          {!activeMatching && (
             <div style={styles.nextStopInsight}>
               <span style={{ ...styles.queueBand, ...queueBandStyle(activeBusiness.discoveryScore) }}>
                 {queueLeadBand(activeBusiness.discoveryScore)}
@@ -833,10 +850,10 @@ export default function ScoutPanel({
               ))}
             </div>
           )}
-          {checkingBusiness ? (
+          {activeMatching ? (
             <div style={styles.checking}>
               <span style={styles.checkingDot} />
-              Checking public pages...
+              {pendingMatchActive && !checkingBusiness ? 'Starting match...' : 'Checking public pages...'}
             </div>
           ) : (
             <div style={sx('nextStopActions')}>
@@ -844,15 +861,15 @@ export default function ScoutPanel({
                 type="button"
                 style={styles.visitButton}
                 onClick={() => handleVisit(nextBusiness)}
-                disabled={visiting}
+                disabled={activeMatching}
               >
-                {visiting ? 'Matching...' : 'Match us'}
+                {activeMatching ? 'Matching...' : 'Match us'}
               </button>
               <button
                 type="button"
                 style={styles.skipButton}
                 onClick={() => handleSkip(nextBusiness)}
-                disabled={visiting}
+                disabled={activeMatching}
               >
                 Skip
               </button>
@@ -1129,7 +1146,7 @@ export default function ScoutPanel({
       )}
 
       {/* Inspection step modal */}
-      {scout.currentInspectionBusiness && scout.inspectionSteps.length > 0 && (
+      {activeProgressBusiness && (
         <div style={{
           position: 'fixed',
           inset: 0,
@@ -1165,7 +1182,7 @@ export default function ScoutPanel({
                 margin: 0,
                 lineHeight: 1.4,
               }}>
-                {scout.currentInspectionBusiness.name}
+                {activeProgressBusiness.name}
               </p>
             </div>
 
@@ -1177,7 +1194,7 @@ export default function ScoutPanel({
               gap: 8,
               maxHeight: '200px',
             }}>
-              {scout.inspectionSteps.map((step, idx) => (
+              {activeProgressSteps.map((step, idx) => (
                 <div
                   key={idx}
                   style={{

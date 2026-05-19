@@ -692,6 +692,20 @@ export async function visitBusiness(runId, placeId, cache) {
       logWarn('business_visit_aborted', { runId, placeId, reason: 'business_not_found' });
       return;
     }
+    if (business.inspection_status === 'checking') {
+      logWarn('business_visit_aborted', { runId, placeId, businessId: business.id, reason: 'already_checking' });
+      return;
+    }
+    if (business.inspection_status !== 'queued') {
+      logWarn('business_visit_aborted', {
+        runId,
+        placeId,
+        businessId: business.id,
+        reason: 'already_decided',
+        inspectionStatus: business.inspection_status,
+      });
+      return;
+    }
 
     const inspection = await inspectBusiness({ run, business, cache });
 

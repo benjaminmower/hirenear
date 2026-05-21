@@ -1,13 +1,14 @@
 # Hire Near
 
-Hire Near is a map-first local hiring scout, not a full job board. Paste a resume, drop a pin, choose a radius, and walk nearby businesses one at a time. You decide which places are worth visiting, and Hire Near checks public business websites for hiring signals before using Claude to rank fit.
+Hire Near is a map-first local hiring scout, not a full job board. Paste a resume, drop a pin, choose a radius, and work nearby businesses one at a time. You decide which doors are worth opening, and Hire Near checks public business websites for hiring signals before using Claude to rank fit.
 
-The Scout workflow is intentionally website-first and human-paced. SearchAPI is only used as a fallback when a business has no website or the website evidence is weak or absent. The product is designed to help you prioritize where to look, not to exhaustively enumerate every open role.
+The Scout workflow is intentionally website-first and human-paced. The run view shows a single next business with preview links for the website, Maps, and any social links already discovered. SearchAPI is only used as a fallback when a business has no website or the website evidence is weak or absent. The product is designed to help you prioritize where to look, not to exhaustively enumerate every open role.
 
 ## Features
 
 - Scout mode for pasted resumes and dropped map pins
 - Mobile-first map UI with city search (Mapbox autocomplete) and anchored pin CTA
+- Swipe-style next-door card with `Match us` and `Skip`
 - Step-by-step inspection feedback shown in a modal overlay during a run
 - Broad target lanes such as Finance, Healthcare, Hospitality, Office/Admin, and Retail
 - Optional avoid terms for roles the user does not want
@@ -21,7 +22,7 @@ The Scout workflow is intentionally website-first and human-paced. SearchAPI is 
 - Cached website inspections with a configurable TTL
 - Business-level fit scores plus opportunity-level match records
 - Cached company profile blurbs generated inside the existing batched Claude matching call
-- Google Places rating, category, hours, and Maps links on Scout business cards
+- Google Places rating, category, hours, Maps links, and preview links on the active door card
 - One batched Claude call per completed run for lower matching cost
 - End-of-run save-search prompt with a lightweight local profile
 - Inspection history view for prior runs
@@ -48,7 +49,7 @@ Hirenear sends a single notification email to businesses where a candidate score
 
 The setup and run controls show privacy notices in the UI. The core disclosure is:
 
-> Resume text is sent to this server and Claude's API for matching. Hire Near checks public business websites only after you click Visit, stores hiring classifications and evidence URLs, and deletes scout runs after 30 days.
+> Resume text is sent to this server and Claude's API for matching. Hire Near checks public business websites only after you click `Match us`, stores hiring classifications and evidence URLs, and deletes scout runs after 30 days.
 
 ## Stack
 
@@ -240,6 +241,7 @@ node --check server/resumeMatcher.js
 - `npm run dev:server` starts the server without `node --watch`; watch mode hit local file descriptor limits in this repo.
 - Without `ANTHROPIC_API_KEY`, Scout still runs and uses a simple heuristic fit score.
 - Re-running the same area can reuse fresh inspection cache rows from `business_inspections`.
+- The matching flow is one business at a time; duplicate `Match us` requests are ignored while a business is already being checked.
 - Older keyword job search API code remains in the backend, but the current UI is centered on the Scout workflow.
 
 ## License

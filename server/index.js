@@ -729,7 +729,7 @@ app.get('/api/scout-runs/:runId/events', (req, res) => {
     if (cleanedUp || res.writableEnded) return;
     res.write(`event: ${type}\n`);
     res.write(`data: ${JSON.stringify(payload)}\n\n`);
-    if (type === 'complete' || type === 'error') {
+    if (type === 'complete' || type === 'error' || type === 'stream_error') {
       cleanup();
     }
   };
@@ -744,7 +744,7 @@ app.get('/api/scout-runs/:runId/events', (req, res) => {
   }, 15000);
   const connectionTimeout = setTimeout(() => {
     send({
-      type: 'error',
+      type: 'stream_error',
       payload: { error: `Scout event stream closed after ${Math.round(SSE_CONNECTION_TTL_MS / 60000)} minutes. Reconnect to continue receiving updates.` },
     });
     cleanup();

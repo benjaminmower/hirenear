@@ -52,13 +52,15 @@ function businessPopupHtml(business) {
     const evidenceUrl = (business.evidence || []).find(item => item.url)?.url;
     const primaryUrl = evidenceUrl || business.website;
     const primaryLabel = evidenceUrl ? 'View hiring page' : 'View website';
-    const signal = business.inspectionStatus === 'checking' ? 'Checking website' : {
-      strong: 'Strong hiring signal',
-      weak: 'Contact path found',
-      none: 'No hiring signal found',
-      failed: 'Inspection failed',
-      queued: 'Queued',
-    }[business.signalStrength] || 'Queued';
+    const signal = business.inspectionStatus === 'checking' ? 'Checking website'
+      : business.inspectionStatus === 'failed' ? 'Inspection failed'
+      : business.inspectionStatus === 'skipped' ? 'Skipped'
+      : {
+          strong: 'Strong hiring signal',
+          weak: 'Contact path found',
+          none: 'No hiring signal found',
+          queued: 'Queued',
+        }[business.signalStrength] || 'Queued';
 
     return `
       <div style="font-family: monospace;">
@@ -252,9 +254,9 @@ export default function Map({
           'circle-color': ['case',
             ['==', ['get', 'inspectionStatus'], 'skipped'], '#ffffff',
             ['==', ['get', 'inspectionStatus'], 'checking'], '#fbbd23',
+            ['==', ['get', 'inspectionStatus'], 'failed'], '#f87272',
             ['==', ['get', 'signalStrength'], 'strong'], '#36d399',
             ['==', ['get', 'signalStrength'], 'weak'], '#4f7cff',
-            ['==', ['get', 'signalStrength'], 'failed'], '#f87272',
             ['==', ['get', 'signalStrength'], 'none'], '#cbd5e1',
             ['==', ['get', 'jobSearchStatus'], 'no_jobs_found'], '#9ca3af',
             '#8b91a8'

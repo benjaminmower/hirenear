@@ -707,7 +707,30 @@ export async function visitBusiness(runId, placeId, cache) {
       return;
     }
 
-    const inspection = await inspectBusiness({ run, business, cache });
+    let inspection;
+    try {
+      inspection = await inspectBusiness({ run, business, cache });
+    } catch (inspectionErr) {
+      logError('business_inspection_failed', { runId, placeId, businessId: business.id, error: inspectionErr });
+      const failureMessage = getErrorMessage(inspectionErr) || 'Inspection failed';
+      const updateResult = await query(
+        `UPDATE scout_businesses
+            SET inspection_status = 'failed',
+                signal_strength = 'none',
+                signal_summary = $2,
+                updated_at = now()
+          WHERE id = $1
+            AND inspection_status IN ('queued', 'checking')
+          RETURNING *`,
+        [business.id, failureMessage]
+      );
+      if (updateResult.rows[0]) {
+        emitRun(runId, 'business_update', { business: businessRowToClient(updateResult.rows[0]) });
+      }
+      await maybeComplete(run);
+      logInfo('business_visit_failed_terminal', { runId, placeId, businessId: business.id, durationMs: Date.now() - startedAt });
+      return;
+    }
 
     // Match resume against this single business immediately after inspection
     const [updatedBiz, allOpportunities] = await Promise.all([
@@ -733,27 +756,47 @@ export async function visitBusiness(runId, placeId, cache) {
 }
 
 // Phase 2b: user clicked Skip — mark skipped, no inspection
+// Only honors Skip for rows still in 'queued' status. Once a business is
+// 'checking' or terminal ('matched'/'skipped'/'failed'), Skip is a no-op
+// to avoid racing inspection completion. The current row is still emitted
+// so optimistic clients can resync if they sent the request anyway.
 export async function skipBusiness(runId, placeId) {
   try {
     logInfo('business_skip_started', { runId, placeId });
-    await query(
-      `UPDATE scout_businesses SET inspection_status = 'skipped', signal_strength = 'none', updated_at = now()
-       WHERE run_id = $1 AND place_id = $2`,
+    const updateResult = await query(
+      `UPDATE scout_businesses
+          SET inspection_status = 'skipped',
+              signal_strength = 'none',
+              updated_at = now()
+        WHERE run_id = $1
+          AND place_id = $2
+          AND inspection_status = 'queued'
+        RETURNING *`,
       [runId, placeId]
     );
-    const bizResult = await query(
-      'SELECT * FROM scout_businesses WHERE run_id = $1 AND place_id = $2',
-      [runId, placeId]
-    );
-    if (bizResult.rows[0]) {
-      emitRun(runId, 'business_update', { business: businessRowToClient(bizResult.rows[0]) });
-      logInfo('business_skip_completed', { runId, placeId, businessId: bizResult.rows[0].id });
+    let bizRow = updateResult.rows[0];
+    if (!bizRow) {
+      const current = await query(
+        'SELECT * FROM scout_businesses WHERE run_id = $1 AND place_id = $2',
+        [runId, placeId]
+      );
+      bizRow = current.rows[0];
+      if (bizRow) {
+        logInfo('business_skip_ignored', { runId, placeId, businessId: bizRow.id, currentStatus: bizRow.inspection_status });
+      } else {
+        logWarn('business_skip_missing_business', { runId, placeId });
+      }
     } else {
-      logWarn('business_skip_missing_business', { runId, placeId });
+      logInfo('business_skip_completed', { runId, placeId, businessId: bizRow.id });
     }
-    // Check if all businesses are now decided
-    const runResult = await query('SELECT * FROM scout_runs WHERE id = $1', [runId]);
-    await maybeComplete(runResult.rows[0]);
+    if (bizRow) {
+      emitRun(runId, 'business_update', { business: businessRowToClient(bizRow) });
+    }
+    // Check if all businesses are now decided (only if we actually changed something)
+    if (updateResult.rows[0]) {
+      const runResult = await query('SELECT * FROM scout_runs WHERE id = $1', [runId]);
+      await maybeComplete(runResult.rows[0]);
+    }
   } catch (err) {
     logError('business_skip_failed', { runId, placeId, error: err });
   }
@@ -762,15 +805,22 @@ export async function skipBusiness(runId, placeId) {
 // Emit complete when every business has been visited or skipped
 async function maybeComplete(run) {
   const remaining = await query(
-    `SELECT COUNT(*) FROM scout_businesses WHERE run_id = $1 AND inspection_status = 'queued'`,
+    `SELECT COUNT(*) FROM scout_businesses
+       WHERE run_id = $1
+         AND inspection_status IN ('queued', 'checking')`,
     [run.id]
   );
   const remainingCount = Number(remaining.rows[0].count);
-  logInfo('scout_completion_checked', { runId: run.id, remainingQueuedBusinesses: remainingCount });
+  logInfo('scout_completion_checked', { runId: run.id, remainingUnfinishedBusinesses: remainingCount });
   if (remainingCount > 0) return;
 
   const [finalBusinesses, finalOpportunities] = await Promise.all([
-    query(`SELECT * FROM scout_businesses WHERE run_id = $1 AND inspection_status != 'skipped'`, [run.id]),
+    query(
+      `SELECT * FROM scout_businesses
+         WHERE run_id = $1
+           AND inspection_status NOT IN ('skipped', 'failed')`,
+      [run.id]
+    ),
     query('SELECT * FROM scout_opportunities WHERE run_id = $1', [run.id]),
   ]);
 

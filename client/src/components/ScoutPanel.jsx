@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback, useEffect } from 'react';
+import { useMemo, useState, useCallback, useEffect, useRef } from 'react';
 import { TARGET_LANES } from '../constants.js';
 import { useMediaQuery } from '../hooks/useMediaQuery.js';
 
@@ -260,6 +260,9 @@ export default function ScoutPanel({
   const [targetLanes, setTargetLanes] = useState(scout.run?.targetLanes || []);
   const [avoidTerms, setAvoidTerms] = useState(scout.run?.avoidTerms || '');
   const [matchingPlaceId, setMatchingPlaceId] = useState(null);
+  const [skippingPlaceId, setSkippingPlaceId] = useState(null);
+  const [watchdogPlaceId, setWatchdogPlaceId] = useState(null);
+  const watchdogTimerRef = useRef(null);
   const [setupStep, setSetupStep] = useState('area');
   const [interestEmail, setInterestEmail] = useState('');
   const [interestSubmitting, setInterestSubmitting] = useState(false);
@@ -302,7 +305,10 @@ export default function ScoutPanel({
   const activeBusinessOpportunities = activeBusiness ? opportunities.filter(item => item.businessId === activeBusiness.id) : [];
   const activePreviewLinks = activeBusiness ? previewLinksForBusiness(activeBusiness, activeBusinessOpportunities) : [];
   const pendingMatchActive = Boolean(matchingPlaceId && activeBusiness?.placeId === matchingPlaceId);
+  const pendingSkipActive = Boolean(skippingPlaceId && activeBusiness?.placeId === skippingPlaceId);
   const activeMatching = Boolean(checkingBusiness || pendingMatchActive);
+  const localPending = pendingMatchActive || pendingSkipActive;
+  const watchdogActive = Boolean(watchdogPlaceId && activeBusiness?.placeId === watchdogPlaceId);
   const activeProgressBusiness = scout.currentInspectionBusiness || (pendingMatchActive ? activeBusiness : null);
   const activeProgressSteps = scout.inspectionSteps.length ? scout.inspectionSteps : ['Starting match...'];
 
@@ -323,7 +329,7 @@ export default function ScoutPanel({
     ...styles[key],
     ...(isMobile && mobileStyles[key] ? mobileStyles[key] : {}),
   }), [isMobile]);
-  const activeSwipeOffset = !activeMatching && activeBusiness && swipeDrag.businessId === activeBusiness.id
+  const activeSwipeOffset = !activeMatching && !pendingSkipActive && activeBusiness && swipeDrag.businessId === activeBusiness.id
     ? swipeDrag.currentX - swipeDrag.startX
     : 0;
   const swipeTilt = Math.max(-12, Math.min(12, activeSwipeOffset / 12));
@@ -344,6 +350,12 @@ export default function ScoutPanel({
     setReportDismissedRunId(null);
     setExpandedProfiles({});
     setMatchingPlaceId(null);
+    setSkippingPlaceId(null);
+    setWatchdogPlaceId(null);
+    if (watchdogTimerRef.current) {
+      clearTimeout(watchdogTimerRef.current);
+      watchdogTimerRef.current = null;
+    }
     setSwipeDrag({ businessId: null, startX: 0, currentX: 0 });
   }, [scout.run?.id]);
 
@@ -357,6 +369,59 @@ export default function ScoutPanel({
     if (matchingBusiness && ['queued', 'checking'].includes(matchingBusiness.inspectionStatus)) return;
     setMatchingPlaceId(null);
   }, [businesses, matchingPlaceId]);
+
+  // Clear skippingPlaceId once the business has left 'queued'.
+  useEffect(() => {
+    if (!skippingPlaceId) return;
+    const skippingBusiness = businesses.find(item => item.placeId === skippingPlaceId);
+    if (skippingBusiness && skippingBusiness.inspectionStatus === 'queued') return;
+    setSkippingPlaceId(null);
+  }, [businesses, skippingPlaceId]);
+
+  // Watchdog: if a local pending state lingers past 25s on a still-queued
+  // business, show a non-blocking note and release the local pending id so
+  // the user can retry. Server-side 'checking' is authoritative and not
+  // covered here — it can only be unblocked by a terminal business_update.
+  useEffect(() => {
+    const pendingId = matchingPlaceId || skippingPlaceId;
+    if (!pendingId) {
+      if (watchdogTimerRef.current) {
+        clearTimeout(watchdogTimerRef.current);
+        watchdogTimerRef.current = null;
+      }
+      return undefined;
+    }
+    watchdogTimerRef.current = setTimeout(() => {
+      const pendingBusiness = businesses.find(item => item.placeId === pendingId);
+      if (!pendingBusiness || pendingBusiness.inspectionStatus !== 'queued') {
+        // Business already advanced or vanished — no-op cleanup.
+        return;
+      }
+      setWatchdogPlaceId(pendingId);
+      if (matchingPlaceId === pendingId) setMatchingPlaceId(null);
+      if (skippingPlaceId === pendingId) setSkippingPlaceId(null);
+    }, 25_000);
+    return () => {
+      if (watchdogTimerRef.current) {
+        clearTimeout(watchdogTimerRef.current);
+        watchdogTimerRef.current = null;
+      }
+    };
+  }, [matchingPlaceId, skippingPlaceId, businesses]);
+
+  // Clear the watchdog note when the business it was about advances away
+  // from 'queued', or when run/component lifecycle clears it.
+  useEffect(() => {
+    if (!watchdogPlaceId) return;
+    const watchedBusiness = businesses.find(item => item.placeId === watchdogPlaceId);
+    if (!watchedBusiness || watchedBusiness.inspectionStatus !== 'queued') {
+      setWatchdogPlaceId(null);
+    }
+  }, [businesses, watchdogPlaceId]);
+
+  useEffect(() => () => {
+    if (watchdogTimerRef.current) clearTimeout(watchdogTimerRef.current);
+  }, []);
 
   const handleStart = () => {
     if (!searchPin) return;
@@ -452,7 +517,7 @@ export default function ScoutPanel({
   }, [interestResult]);
 
   const handleVisit = useCallback(async (business) => {
-    if (!business?.placeId || matchingPlaceId || checkingBusiness) return;
+    if (!business?.placeId || matchingPlaceId || skippingPlaceId || checkingBusiness) return;
     setMatchingPlaceId(business.placeId);
     try {
       await scout.visitBusiness(business.placeId);
@@ -460,18 +525,26 @@ export default function ScoutPanel({
       console.error(err);
       setMatchingPlaceId(null);
     }
-  }, [checkingBusiness, matchingPlaceId, scout]);
+  }, [checkingBusiness, matchingPlaceId, scout, skippingPlaceId]);
 
   const handleSkip = useCallback(async (business) => {
-    await scout.skipBusiness(business.placeId);
-  }, [scout]);
+    if (!business?.placeId) return;
+    if (matchingPlaceId || skippingPlaceId || checkingBusiness) return;
+    setSkippingPlaceId(business.placeId);
+    try {
+      await scout.skipBusiness(business.placeId);
+    } catch (err) {
+      console.error(err);
+      setSkippingPlaceId(null);
+    }
+  }, [checkingBusiness, matchingPlaceId, scout, skippingPlaceId]);
 
   const handleSwipeStart = useCallback((event, business) => {
-    if (!business || activeMatching) return;
+    if (!business || activeMatching || pendingSkipActive) return;
     if (event.target.closest?.('button, a')) return;
     setSwipeDrag({ businessId: business.id, startX: event.clientX, currentX: event.clientX });
     event.currentTarget.setPointerCapture?.(event.pointerId);
-  }, [activeMatching]);
+  }, [activeMatching, pendingSkipActive]);
 
   const handleSwipeMove = useCallback((event) => {
     setSwipeDrag(current => {
@@ -821,7 +894,7 @@ export default function ScoutPanel({
           <div style={styles.nextStopQueueMeta}>
             {queueSummary(checkingBusiness ? [checkingBusiness, ...queuedBusinesses] : queuedBusinesses)}
           </div>
-          {!activeMatching && (
+          {!checkingBusiness && (
             <div style={styles.nextStopInsight}>
               <span style={{ ...styles.queueBand, ...queueBandStyle(activeBusiness.discoveryScore) }}>
                 {queueLeadBand(activeBusiness.discoveryScore)}
@@ -850,30 +923,43 @@ export default function ScoutPanel({
               ))}
             </div>
           )}
-          {activeMatching ? (
+          {checkingBusiness ? (
             <div style={styles.checking}>
               <span style={styles.checkingDot} />
-              {pendingMatchActive && !checkingBusiness ? 'Starting match...' : 'Checking public pages...'}
+              Checking public pages...
             </div>
           ) : (
-            <div style={sx('nextStopActions')}>
-              <button
-                type="button"
-                style={styles.visitButton}
-                onClick={() => handleVisit(nextBusiness)}
-                disabled={activeMatching}
-              >
-                {activeMatching ? 'Matching...' : 'Match us'}
-              </button>
-              <button
-                type="button"
-                style={styles.skipButton}
-                onClick={() => handleSkip(nextBusiness)}
-                disabled={activeMatching}
-              >
-                Skip
-              </button>
-            </div>
+            <>
+              {watchdogActive && (
+                <div style={styles.watchdogNote}>
+                  Still working in the background. We&apos;ll refresh this door when updates arrive.
+                </div>
+              )}
+              <div style={sx('nextStopActions')}>
+                <button
+                  type="button"
+                  style={{
+                    ...styles.visitButton,
+                    ...((pendingSkipActive) ? styles.actionButtonDimmed : {}),
+                  }}
+                  onClick={() => handleVisit(nextBusiness)}
+                  disabled={localPending}
+                >
+                  {pendingMatchActive ? 'Matching...' : 'Match us'}
+                </button>
+                <button
+                  type="button"
+                  style={{
+                    ...styles.skipButton,
+                    ...((pendingMatchActive) ? styles.actionButtonDimmed : {}),
+                  }}
+                  onClick={() => handleSkip(nextBusiness)}
+                  disabled={localPending}
+                >
+                  {pendingSkipActive ? 'Skipping...' : 'Skip'}
+                </button>
+              </div>
+            </>
           )}
         </div>
       )}
@@ -919,6 +1005,7 @@ export default function ScoutPanel({
           const selected = selectedBusiness?.id === business.id;
           const signal = business.inspectionStatus === 'checking' ? 'checking'
             : business.inspectionStatus === 'skipped' ? 'none'
+            : business.inspectionStatus === 'failed' ? 'none'
             : business.signalStrength;
           const placeMeta = businessPlaceMeta(business);
           const profile = business.companyProfile;
@@ -933,13 +1020,20 @@ export default function ScoutPanel({
           return (
             <div
               key={business.id}
-              style={{ ...styles.card, ...(selected ? styles.cardSelected : {}), ...(business.inspectionStatus === 'skipped' ? styles.cardSkipped : {}) }}
+              style={{
+                ...styles.card,
+                ...(selected ? styles.cardSelected : {}),
+                ...(business.inspectionStatus === 'skipped' ? styles.cardSkipped : {}),
+                ...(business.inspectionStatus === 'failed' ? styles.cardFailed : {}),
+              }}
               onClick={() => onSelectBusiness(selected ? null : business)}
             >
               <div style={sx('cardHeader')}>
                 <span style={styles.title}>{business.name}</span>
-                <span style={{ ...styles.badge, ...signalStyle(signal) }}>
-                  {business.inspectionStatus === 'skipped' ? 'Skipped' : signalLabel(signal)}
+                <span style={{ ...styles.badge, ...signalStyle(signal), ...(business.inspectionStatus === 'failed' ? styles.badgeFailed : {}) }}>
+                  {business.inspectionStatus === 'skipped' ? 'Skipped'
+                    : business.inspectionStatus === 'failed' ? 'Failed'
+                    : signalLabel(signal)}
                 </span>
               </div>
               <div style={styles.meta}>{business.vicinity}</div>
@@ -2007,6 +2101,19 @@ const styles = {
     fontWeight: 600,
     cursor: 'pointer',
   },
+  actionButtonDimmed: {
+    opacity: 0.55,
+    cursor: 'default',
+  },
+  watchdogNote: {
+    fontSize: 12,
+    color: '#6f5f4c',
+    background: '#faf6ee',
+    border: '1px solid #ecdfc4',
+    borderRadius: 4,
+    padding: '6px 8px',
+    marginBottom: 6,
+  },
   checking: {
     display: 'flex',
     gap: 8,
@@ -2209,6 +2316,7 @@ const styles = {
     fontSize: 12,
   },
   cardSkipped: { opacity: 0.6 },
+  cardFailed: { opacity: 0.75, borderLeft: '2px solid #b42318' },
 };
 
 const mobileStyles = {
